@@ -1,0 +1,13 @@
+{
+  "name": "撮影ルート君",
+  "short_name": "ルート君",
+  "description": "LINEの物件リストを貼るだけで、撮影の最短巡回ルートを自動作成",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#2F6FE4",
+  "icons": [
+    { "src": "routekun-icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "routekun-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

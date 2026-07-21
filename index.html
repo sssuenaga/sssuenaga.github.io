@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>撮影ルート君 - 物件まわり最短ルート</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ルート君">
+<meta name="theme-color" content="#2F6FE4">
+<link rel="apple-touch-icon" sizes="180x180" href="routekun-icon-180.png">
+<link rel="icon" type="image/png" href="routekun-icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --main:#1a73e8; --main-dark:#1557b0; --bg:#f4f7fb; --card:#ffffff;
+    --text:#202124; --sub:#5f6368; --line:#dfe3ea; --ok:#188038; --warn:#d93025;
+    --orange:#e8710a;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; font-family:"Yu Gothic UI","Meiryo",sans-serif; background:var(--bg); color:var(--text); font-size:15px;}
+  header{background:linear-gradient(135deg,#1a73e8,#4e9af5); color:#fff; padding:16px 20px;}
+  header h1{margin:0; font-size:22px;}
+  header p{margin:6px 0 0; font-size:13px; opacity:.92;}
+  main{max-width:900px; margin:0 auto; padding:14px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:14px 0; box-shadow:0 1px 3px rgba(0,0,0,.05);}
+  .card h2{margin:0 0 10px; font-size:16px; display:flex; align-items:center; gap:8px;}
+  .stepnum{background:var(--main); color:#fff; width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:14px; flex:none;}
+  textarea{width:100%; min-height:130px; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit; resize:vertical;}
+  input[type=text]{padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit;}
+  input[type=time], input[type=number]{padding:6px 8px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit;}
+  button{font-family:inherit; cursor:pointer; border:none; border-radius:8px; font-size:14px;}
+  .btn{background:var(--main); color:#fff; padding:10px 18px;}
+  .btn:hover{background:var(--main-dark);}
+  .btn-sub{background:#e8f0fe; color:var(--main); padding:8px 14px;}
+  .btn-sub:hover{background:#d4e3fc;}
+  .btn-big{display:block; width:100%; background:var(--orange); color:#fff; font-size:20px; font-weight:bold; padding:16px; border-radius:12px; box-shadow:0 2px 6px rgba(232,113,10,.4);}
+  .btn-big:hover{filter:brightness(1.07);}
+  .btn-big:disabled{background:#bbb; box-shadow:none; cursor:default;}
+  .hint{font-size:12.5px; color:var(--sub); margin:6px 0 10px; line-height:1.6;}
+  table{width:100%; border-collapse:collapse; font-size:14px;}
+  th{background:#f1f4f9; font-size:12.5px; color:var(--sub); padding:6px 8px; text-align:left; border-bottom:1px solid var(--line);}
+  td{padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:middle;}
+  td input[type=text]{width:100%;}
+  .typebtn{padding:7px 10px; border-radius:20px; font-size:13px; font-weight:bold; white-space:nowrap;}
+  .type-out{background:#e6f4ea; color:var(--ok);}
+  .type-in{background:#fce8e6; color:var(--warn);}
+  .delbtn{background:none; color:#aaa; font-size:18px; padding:2px 8px;}
+  .delbtn:hover{color:var(--warn);}
+  .settings-grid{display:flex; flex-wrap:wrap; gap:14px 26px; align-items:center;}
+  .settings-grid label{display:flex; align-items:center; gap:6px; font-size:14px;}
+  #status{margin:10px 0; padding:10px 14px; border-radius:8px; background:#e8f0fe; color:var(--main-dark); font-size:14px; display:none;}
+  #status.err{background:#fce8e6; color:var(--warn);}
+  .summary{font-size:16px; line-height:1.8; margin-bottom:10px;}
+  .summary b{font-size:20px; color:var(--main-dark);}
+  .badge-ok{color:var(--ok); font-weight:bold;}
+  .badge-warn{color:var(--warn); font-weight:bold;}
+  .sched td{font-size:14px;}
+  .sched .num{background:var(--main); color:#fff; width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:13px;}
+  .travelrow td{background:#f8fafd; color:var(--sub); font-size:12.5px; padding:3px 8px 3px 20px; border-bottom:none;}
+  .gmaplink{font-size:12.5px; color:var(--main); text-decoration:none; white-space:nowrap;}
+  .gmaplink:hover{text-decoration:underline;}
+  #map{height:380px; border-radius:10px; margin-top:14px; border:1px solid var(--line);}
+  .numicon{background:var(--main); color:#fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.4);}
+  .numicon.start{background:var(--orange);}
+  .skiplist{background:#fef7e0; border:1px solid #f5d97e; border-radius:8px; padding:10px 14px; margin-top:12px; font-size:14px;}
+  .actionsrow{display:flex; flex-wrap:wrap; gap:10px; margin-top:14px;}
+  footer{text-align:center; color:var(--sub); font-size:12px; padding:20px;}
+  @media (max-width:600px){ td, th{padding:5px 4px;} main{padding:8px;} }
+</style>
+</head>
+<body>
+<header style="display:flex; align-items:center; gap:14px;">
+  <svg viewBox="105 35 302 400" width="52" height="69" style="flex:none; filter:drop-shadow(0 2px 3px rgba(0,0,0,.25));" aria-hidden="true">
+    <path d="M256,420 C230,370 130,300 130,205 C130,133 186,78 256,78 C326,78 382,133 382,205 C382,300 282,370 256,420 Z" fill="#FFFFFF"/>
+    <ellipse cx="185" cy="235" rx="20" ry="13" fill="#FFB3C1"/>
+    <ellipse cx="327" cy="235" rx="20" ry="13" fill="#FFB3C1"/>
+    <ellipse cx="211" cy="196" rx="15" ry="20" fill="#333A45"/>
+    <ellipse cx="301" cy="196" rx="15" ry="20" fill="#333A45"/>
+    <circle cx="216" cy="188" r="5.5" fill="#FFF"/>
+    <circle cx="306" cy="188" r="5.5" fill="#FFF"/>
+    <path d="M236,228 Q256,248 276,228" fill="none" stroke="#333A45" stroke-width="8" stroke-linecap="round"/>
+    <path d="M256,78 C252,58 268,48 282,52" fill="none" stroke="#333A45" stroke-width="7" stroke-linecap="round"/>
+    <g transform="translate(256,306)">
+      <rect x="-44" y="-26" width="88" height="56" rx="14" fill="#3D4654"/>
+      <rect x="-14" y="-34" width="30" height="12" rx="6" fill="#3D4654"/>
+      <circle cx="0" cy="2" r="19" fill="#6EC8FF"/>
+      <circle cx="0" cy="2" r="11" fill="#2F6FE4"/>
+      <circle cx="5" cy="-3" r="4" fill="#FFF"/>
+      <circle cx="-30" cy="-12" r="4.5" fill="#FFD75E"/>
+    </g>
+  </svg>
+  <div>
+    <h1>撮影ルート君</h1>
+    <p>LINEの物件リストを貼るだけ。ルート君が最短の回り順を考えます。</p>
+  </div>
+</header>
+<main>
+
+  <div class="card">
+    <h2><span class="stepnum">1</span>LINEで来た物件の文章を貼り付ける</h2>
+    <div class="hint">
+      LINEのメッセージをそのままコピーして貼り付けてください。1行に1物件が理想です。<br>
+      「室内」「内観」などの言葉があると<b>室内撮影</b>、なければ<b>外観のみ</b>と判定します(あとで直せます)。
+    </div>
+    <textarea id="inputText" placeholder="例)&#10;明日お願いします&#10;①新宿区西新宿2-8-1 ○○ビル 外観のみ&#10;②渋谷区神南1-19-11 △△マンション101 室内あり&#10;③品川区大井1-1-1 現場写真"></textarea>
+    <div style="margin-top:8px;">
+      <button class="btn" id="parseBtn">▼ 文章を読み取って一覧にする</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="stepnum">2</span>物件の一覧を確認する</h2>
+    <div class="hint">住所が違っていたらここで直してください。「外観のみ / 室内あり」はボタンを押すと切り替わります。</div>
+    <table id="propTable">
+      <thead><tr><th style="width:28px;">#</th><th>物件名・メモ</th><th>住所</th><th style="width:100px;">撮影の種類</th><th style="width:36px;"></th></tr></thead>
+      <tbody id="propBody"></tbody>
+    </table>
+    <div style="margin-top:10px;">
+      <button class="btn-sub" id="addRowBtn">＋ 手で1件追加する</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="stepnum">3</span>出発地と時間の設定</h2>
+    <div class="settings-grid" style="margin-bottom:12px;">
+      <label style="flex:1; min-width:260px;">出発地の住所
+        <input type="text" id="startAddr" style="flex:1;" placeholder="例)東京都新宿区○○1-2-3(自宅や事務所)">
+      </label>
+      <button class="btn-sub" id="geoBtn">📍 現在地を使う</button>
+    </div>
+    <div class="settings-grid">
+      <label>出発時刻 <input type="time" id="startTime" value="09:00"></label>
+      <label>終了リミット <input type="time" id="endTime" value="14:30"></label>
+      <label>外観のみ <input type="number" id="durOut" value="10" min="1" max="120" style="width:60px;">分/件</label>
+      <label>室内あり <input type="number" id="durIn" value="30" min="1" max="180" style="width:60px;">分/件</label>
+      <label>移動時間の余裕 <input type="number" id="margin" value="20" min="0" max="100" style="width:60px;">%増し</label>
+      <label>駐車・準備 <input type="number" id="parkMin" value="5" min="0" max="60" style="width:60px;">分/件</label>
+    </div>
+    <div class="hint" style="margin-top:8px;">※ 設定は自動で保存されるので、次回からは入力不要です。</div>
+  </div>
+
+  <button class="btn-big" id="calcBtn">🚗 最短ルートを計算する</button>
+  <div id="status"></div>
+
+  <div class="card" id="resultCard" style="display:none;">
+    <h2><span class="stepnum">✓</span>今日のまわり順</h2>
+    <div class="summary" id="summary"></div>
+    <table class="sched"><tbody id="schedBody"></tbody></table>
+    <div id="skipped"></div>
+    <div class="actionsrow">
+      <button class="btn" id="gmapAllBtn">🗺 Googleマップで全ルートを開く</button>
+      <button class="btn-sub" id="copyBtn">📋 予定表をコピー(LINE貼り付け用)</button>
+    </div>
+    <div id="map"></div>
+  </div>
+
+</main>
+<footer>撮影ルート君 | 住所検索:国土地理院 / ルート計算:OSRM / 地図:国土地理院タイル</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+
+/* ---------- 状態 ---------- */
+let rows = [];            // {id, name, addr, type:'out'|'in', lat, lon}
+let nextId = 1;
+let geoPos = null;        // 現在地 {lat, lon}
+let lastResult = null;    // 計算結果(コピー・Googleマップ用)
+let map = null, mapLayer = null;
+
+/* ---------- 保存・読込 ---------- */
+function saveState(){
+  try{
+    localStorage.setItem('routekun_rows', JSON.stringify(rows.map(r=>({name:r.name, addr:r.addr, type:r.type}))));
+    localStorage.setItem('routekun_text', $('#inputText').value);
+    localStorage.setItem('routekun_cfg', JSON.stringify({
+      startAddr:$('#startAddr').value, startTime:$('#startTime').value, endTime:$('#endTime').value,
+      durOut:$('#durOut').value, durIn:$('#durIn').value, margin:$('#margin').value, parkMin:$('#parkMin').value
+    }));
+  }catch(e){}
+}
+function loadState(){
+  try{
+    const cfg = JSON.parse(localStorage.getItem('routekun_cfg')||'null');
+    if(cfg){
+      $('#startAddr').value = cfg.startAddr||'';
+      $('#startTime').value = cfg.startTime||'09:00';
+      $('#endTime').value   = cfg.endTime||'14:30';
+      $('#durOut').value = cfg.durOut||10; $('#durIn').value = cfg.durIn||30;
+      $('#margin').value = cfg.margin!=null?cfg.margin:20; $('#parkMin').value = cfg.parkMin!=null?cfg.parkMin:5;
+    }
+    $('#inputText').value = localStorage.getItem('routekun_text')||'';
+    const saved = JSON.parse(localStorage.getItem('routekun_rows')||'[]');
+    saved.forEach(r=>rows.push({id:nextId++, name:r.name||'', addr:r.addr||'', type:r.type==='in'?'in':'out', lat:null, lon:null}));
+  }catch(e){}
+}
+
+/* ---------- 文章の読み取り ---------- */
+function zenToHan(s){
+  return s.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+          .replace(/[−―‐–ｰ－]/g,'-').replace(/　/g,' ');
+}
+const IN_RE  = /室内|内観|内部|居室|中の写真|空室|鍵|カギ/;
+const OUT_RE = /外観のみ|外のみ|現場写真|現場のみ|外だけ/;
+const PREF = '(?:北海道|東京都|京都府|大阪府|[一-龯]{2,3}県)';
+const ACHR = '[0-9一-龯々ヶァ-ンぁ-んa-zA-Z\\-]';
+
+function extractAddress(line){
+  let m = line.match(new RegExp(PREF + ACHR + '{3,45}'));
+  if(!m) m = line.match(new RegExp('[一-龯]{1,6}[市区]' + ACHR + '{2,45}'));
+  if(!m) m = line.match(new RegExp('[一-龯]{1,6}[町村]' + ACHR + '{2,45}'));
+  if(!m) return null;
+  let addr = m[0];
+  // 番地の数字の後ろに建物名がくっついた場合、数字の並びまでで切る
+  const cut = addr.match(/^(.*?\d+(?:-\d+)*(?:号|番地|番|階|F)?)[^0-9-]/);
+  if(cut && /\d/.test(cut[1])) addr = cut[1];
+  return {addr:addr, index:m.index};
+}
+
+function parseInput(){
+  const text = zenToHan($('#inputText').value);
+  const lines = text.split(/\r?\n/);
+  const found = [];
+  for(let raw of lines){
+    let line = raw.trim();
+    if(!line) continue;
+    // 先頭の番号・記号(①、1.、・など)を除去
+    line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
+    const hit = extractAddress(line);
+    if(!hit) continue;
+    const type = IN_RE.test(raw) ? 'in' : 'out';
+    let name = (line.slice(0,hit.index) + ' ' + line.slice(hit.index + hit.addr.length))
+      .replace(IN_RE,'').replace(OUT_RE,'')
+      .replace(/外観|室内|内観|撮影|写真|お願いします|お願い|します|よろしく|あり|なし|のみ|だけ|です|、|。/g,'')
+      .replace(/^[のもをはにでとが・\s]+|[のもをはにでとが・\s]+$/g,'').trim();
+    found.push({id:nextId++, name:name, addr:hit.addr, type:type, lat:null, lon:null});
+  }
+  if(!found.length){
+    alert('住所が見つかりませんでした。\n「○○市」「○○区」などが入った行が物件として認識されます。\n下の一覧に手で追加することもできます。');
+    return;
+  }
+  rows = found;
+  renderTable();
+  saveState();
+}
+
+/* ---------- 一覧テーブル ---------- */
+function renderTable(){
+  const tb = $('#propBody');
+  tb.innerHTML = '';
+  rows.forEach((r,i)=>{
+    const tr = document.createElement('tr');
+    const isIn = r.type==='in';
+    tr.innerHTML =
+      `<td>${i+1}</td>`+
+      `<td><input type="text" data-id="${r.id}" data-f="name" value=""></td>`+
+      `<td><input type="text" data-id="${r.id}" data-f="addr" value=""></td>`+
+      `<td><button class="typebtn ${isIn?'type-in':'type-out'}" data-id="${r.id}">${isIn?'🏠 室内あり':'📷 外観のみ'}</button></td>`+
+      `<td><button class="delbtn" data-id="${r.id}" title="削除">✕</button></td>`;
+    tr.querySelector('[data-f=name]').value = r.name;
+    tr.querySelector('[data-f=addr]').value = r.addr;
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('change', e=>{
+      const r = rows.find(x=>x.id==e.target.dataset.id);
+      if(!r) return;
+      r[e.target.dataset.f==='name'?'name':'addr'] = e.target.value;
+      if(e.target.dataset.f==='addr'){ r.lat=null; r.lon=null; }
+      saveState();
+    });
+  });
+  tb.querySelectorAll('.typebtn').forEach(b=>{
+    b.addEventListener('click', e=>{
+      const r = rows.find(x=>x.id==e.target.dataset.id);
+      r.type = r.type==='in'?'out':'in';
+      renderTable(); saveState();
+    });
+  });
+  tb.querySelectorAll('.delbtn').forEach(b=>{
+    b.addEventListener('click', e=>{
+      rows = rows.filter(x=>x.id!=e.target.dataset.id);
+      renderTable(); saveState();
+    });
+  });
+}
+
+/* ---------- 住所→座標(国土地理院) ---------- */
+const geoCache = (()=>{ try{return JSON.parse(localStorage.getItem('routekun_geocache')||'{}');}catch(e){return {};} })();
+async function geocode(addr){
+  addr = zenToHan(addr).trim();
+  if(!addr) return null;
+  if(geoCache[addr]) return geoCache[addr];
+  const url = 'https://msearch.gsi.go.jp/address-search/AddressSearch?q=' + encodeURIComponent(addr);
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('住所検索サーバーに繋がりません');
+  const js = await res.json();
+  if(!js || !js.length) return null;
+  const c = js[0].geometry.coordinates;
+  const out = {lat:c[1], lon:c[0], title:(js[0].properties&&js[0].properties.title)||addr};
+  geoCache[addr] = out;
+  try{ localStorage.setItem('routekun_geocache', JSON.stringify(geoCache)); }catch(e){}
+  return out;
+}
+
+/* ---------- 移動時間マトリクス(OSRM、失敗時は直線距離で概算) ---------- */
+function haversine(a,b){
+  const R=6371000, d=Math.PI/180;
+  const dLat=(b.lat-a.lat)*d, dLon=(b.lon-a.lon)*d;
+  const h=Math.sin(dLat/2)**2 + Math.cos(a.lat*d)*Math.cos(b.lat*d)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+async function buildMatrix(pts){
+  try{
+    const coords = pts.map(p=>p.lon+','+p.lat).join(';');
+    const url = 'https://router.project-osrm.org/table/v1/driving/' + coords + '?annotations=duration';
+    const res = await fetch(url);
+    if(res.ok){
+      const js = await res.json();
+      if(js.code==='Ok' && js.durations) return {matrix:js.durations, approx:false};
+    }
+    throw new Error('osrm');
+  }catch(e){
+    // 概算:直線距離×1.4 ÷ 時速25km
+    const n = pts.length;
+    const m = Array.from({length:n},()=>new Array(n).fill(0));
+    for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+      if(i!==j) m[i][j] = haversine(pts[i],pts[j])*1.4 / (25000/3600);
+    }
+    return {matrix:m, approx:true};
+  }
+}
+
+/* ---------- ルート最適化(最近傍法+2-opt) ---------- */
+function nearestNeighbor(m, n){        // 訪問先はマトリクス index 1..n、始点は0
+  const left = new Set(); for(let i=1;i<=n;i++) left.add(i);
+  const order = []; let cur = 0;
+  while(left.size){
+    let best=null, bd=Infinity;
+    for(const i of left){ if(m[cur][i]<bd){bd=m[cur][i]; best=i;} }
+    order.push(best); left.delete(best); cur=best;
+  }
+  return order;
+}
+function pathCost(m, order){
+  let c=0, prev=0;
+  for(const i of order){ c+=m[prev][i]; prev=i; }
+  return c;
+}
+function twoOpt(m, order){
+  order = order.slice();
+  let improved = true;
+  while(improved){
+    improved = false;
+    for(let i=0;i<order.length-1;i++){
+      for(let j=i+1;j<order.length;j++){
+        const cand = order.slice(0,i).concat(order.slice(i,j+1).reverse(), order.slice(j+1));
+        if(pathCost(m,cand) < pathCost(m,order)-0.5){ order=cand; improved=true; }
+      }
+    }
+  }
+  return order;
+}
+
+/* ---------- スケジュール計算 ---------- */
+function hmToMin(s){ const [h,mi]=s.split(':').map(Number); return h*60+mi; }
+function minToHm(t){ t=Math.round(t); return Math.floor(t/60)+':'+String(t%60).padStart(2,'0'); }
+
+function readCfg(){
+  return {
+    startMin: hmToMin($('#startTime').value||'09:00'),
+    endLimit: hmToMin($('#endTime').value||'14:30'),
+    durOut: +$('#durOut').value||10,
+    durIn: +$('#durIn').value||30,
+    margin: +$('#margin').value||0,
+    parkMin: +$('#parkMin').value||0
+  };
+}
+function travelMin(m, i, j, cfg){ return m[i][j]/60 * (1+cfg.margin/100); }
+function shootMin(r, cfg){ return cfg.parkMin + (r.type==='in'?cfg.durIn:cfg.durOut); }
+
+function buildSchedule(m, order, list, cfg){
+  let t = cfg.startMin, prev = 0;
+  const stops = [];
+  for(const idx of order){
+    const r = list[idx-1];
+    const tv = travelMin(m, prev, idx, cfg);
+    const arrive = t + tv;
+    const depart = arrive + shootMin(r, cfg);
+    stops.push({row:r, matIdx:idx, travel:tv, arrive:arrive, depart:depart});
+    t = depart; prev = idx;
+  }
+  return {stops:stops, endMin:t};
+}
+function planRoute(m, list, cfg){
+  let order = twoOpt(m, nearestNeighbor(m, list.length));
+  const skipped = [];
+  while(order.length){
+    const s = buildSchedule(m, order, list, cfg);
+    if(s.endMin <= cfg.endLimit) return {stops:s.stops, endMin:s.endMin, skipped:skipped};
+    // 一番「重い」1件を外すと最も時間が浮く物件を除外
+    let bi=0, bestGain=-1;
+    for(let i=0;i<order.length;i++){
+      const prev = i===0?0:order[i-1];
+      const next = i===order.length-1?null:order[i+1];
+      let gain = travelMin(m,prev,order[i],cfg) + shootMin(list[order[i]-1],cfg);
+      if(next!==null) gain += travelMin(m,order[i],next,cfg) - travelMin(m,prev,next,cfg);
+      if(gain>bestGain){bestGain=gain; bi=i;}
+    }
+    skipped.push(list[order[bi]-1]);
+    order.splice(bi,1);
+    order = twoOpt(m, order);
+  }
+  return {stops:[], endMin:cfg.startMin, skipped:skipped};
+}
+
+/* ---------- メイン計算 ---------- */
+function setStatus(msg, isErr){
+  const el = $('#status');
+  if(!msg){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.className = isErr?'err':'';
+  el.textContent = msg;
+}
+
+async function calc(){
+  saveState();
+  const list = rows.filter(r=>r.addr.trim());
+  if(!list.length){ alert('物件がありません。まずステップ1で文章を読み取ってください。'); return; }
+
+  const btn = $('#calcBtn'); btn.disabled = true;
+  try{
+    // 出発地
+    let start = null;
+    if(geoPos){ start = {lat:geoPos.lat, lon:geoPos.lon, label:'現在地'}; }
+    else{
+      const sa = $('#startAddr').value.trim();
+      if(!sa){ alert('出発地の住所を入れるか、「現在地を使う」を押してください。'); btn.disabled=false; return; }
+      setStatus('出発地の場所を調べています…');
+      const g = await geocode(sa);
+      if(!g){ setStatus('出発地の住所が見つかりません:「'+sa+'」を確認してください。', true); btn.disabled=false; return; }
+      start = {lat:g.lat, lon:g.lon, label:'出発地'};
+    }
+
+    // 物件の住所を座標に
+    const failed = [];
+    for(let i=0;i<list.length;i++){
+      if(list[i].lat!=null) continue;
+      setStatus(`住所を調べています… (${i+1}/${list.length}) ${list[i].addr}`);
+      let g = null;
+      try{ g = await geocode(list[i].addr); }catch(e){ setStatus('住所検索サーバーに繋がりません。ネット接続を確認してください。', true); btn.disabled=false; return; }
+      if(g){ list[i].lat=g.lat; list[i].lon=g.lon; }
+      else failed.push(list[i]);
+      await new Promise(r=>setTimeout(r,150));
+    }
+    const ok = list.filter(r=>r.lat!=null);
+    if(!ok.length){ setStatus('どの物件の住所も見つかりませんでした。住所を確認してください。', true); btn.disabled=false; return; }
+
+    setStatus('車の移動時間を計算しています…');
+    const pts = [start].concat(ok);
+    const {matrix, approx} = await buildMatrix(pts);
+
+    setStatus('一番速いまわり順を考えています…');
+    const cfg = readCfg();
+    const plan = planRoute(matrix, ok, cfg);
+
+    lastResult = {start:start, plan:plan, cfg:cfg, approx:approx, failed:failed};
+    renderResult();
+    setStatus('');
+  }catch(e){
+    setStatus('エラーが起きました:' + e.message, true);
+  }
+  btn.disabled = false;
+}
+
+/* ---------- 結果表示 ---------- */
+function gmapLink(a, b){
+  return 'https://www.google.com/maps/dir/?api=1&origin=' + a.lat + ',' + a.lon +
+         '&destination=' + b.lat + ',' + b.lon + '&travelmode=driving';
+}
+function renderResult(){
+  const {start, plan, cfg, approx, failed} = lastResult;
+  $('#resultCard').style.display = 'block';
+
+  // サマリー
+  const nIn = plan.stops.filter(s=>s.row.type==='in').length;
+  const nOut = plan.stops.length - nIn;
+  let html = `回れるのは <b>${plan.stops.length}件</b>(室内 ${nIn}件・外観 ${nOut}件)`;
+  if(plan.stops.length){
+    html += ` / 終了予定 <b>${minToHm(plan.endMin)}</b> `;
+    html += plan.endMin<=cfg.endLimit ? `<span class="badge-ok">✓ ${minToHm(cfg.endLimit)}までに終わります</span>` : '';
+  }
+  if(approx) html += `<div class="hint" style="color:var(--warn);">⚠ ルート計算サーバーに繋がらなかったため、移動時間は直線距離からの概算です。</div>`;
+  $('#summary').innerHTML = html;
+
+  // スケジュール表
+  const tb = $('#schedBody'); tb.innerHTML='';
+  let prevPt = start;
+  plan.stops.forEach((s,i)=>{
+    const tr1 = document.createElement('tr'); tr1.className='travelrow';
+    tr1.innerHTML = `<td colspan="4">🚗 移動 約${Math.round(s.travel)}分 <a class="gmaplink" href="${gmapLink(prevPt,s.row)}" target="_blank">→ この区間をナビで開く</a></td>`;
+    tb.appendChild(tr1);
+    const tr2 = document.createElement('tr');
+    const label = s.row.type==='in'?'🏠 室内':'📷 外観';
+    tr2.innerHTML =
+      `<td style="width:34px;"><span class="num">${i+1}</span></td>`+
+      `<td><b></b><div class="hint" style="margin:2px 0 0;"></div></td>`+
+      `<td style="white-space:nowrap;">${minToHm(s.arrive)} 着<br>${minToHm(s.depart)} 発</td>`+
+      `<td style="white-space:nowrap;">${label}<br><span class="hint">${Math.round(s.depart-s.arrive)}分</span></td>`;
+    tr2.querySelector('b').textContent = s.row.name || s.row.addr;
+    tr2.querySelector('.hint').textContent = s.row.name ? s.row.addr : '';
+    tb.appendChild(tr2);
+    prevPt = s.row;
+  });
+
+  // 入りきらない・見つからない物件
+  let sk = '';
+  if(plan.skipped.length){
+    sk += `<div class="skiplist">⏰ <b>時間内に入りきらない物件(${plan.skipped.length}件)</b> — 翌日にまわすか、終了時刻をのばしてください。<br>`;
+    sk += plan.skipped.map(r=>'・'+(r.name||r.addr)+'('+r.addr+')').join('<br>') + '</div>';
+  }
+  if(failed.length){
+    sk += `<div class="skiplist">❓ <b>住所が見つからなかった物件(${failed.length}件)</b> — ステップ2で住所を直して再計算してください。<br>`;
+    sk += failed.map(r=>'・'+r.addr).join('<br>') + '</div>';
+  }
+  $('#skipped').innerHTML = sk;
+
+  drawMap();
+  $('#resultCard').scrollIntoView({behavior:'smooth'});
+}
+
+function drawMap(){
+  if(typeof L === 'undefined') return;   // オフライン等でLeafletが読めない場合
+  const {start, plan} = lastResult;
+  if(!map){
+    map = L.map('map');
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
+      {attribution:'国土地理院', maxZoom:18}).addTo(map);
+  }
+  if(mapLayer) mapLayer.remove();
+  mapLayer = L.layerGroup().addTo(map);
+  const pts = [[start.lat,start.lon]];
+  L.marker([start.lat,start.lon], {icon:L.divIcon({className:'', html:'<div class="numicon start">出</div>', iconSize:[28,28], iconAnchor:[14,14]})}).addTo(mapLayer);
+  plan.stops.forEach((s,i)=>{
+    pts.push([s.row.lat, s.row.lon]);
+    L.marker([s.row.lat,s.row.lon], {icon:L.divIcon({className:'', html:'<div class="numicon">'+(i+1)+'</div>', iconSize:[28,28], iconAnchor:[14,14]})})
+      .addTo(mapLayer).bindPopup((s.row.name||s.row.addr)+'<br>'+minToHm(s.arrive)+'着');
+  });
+  if(pts.length>1) L.polyline(pts, {color:'#1a73e8', weight:3, dashArray:'6 8'}).addTo(mapLayer);
+  map.fitBounds(pts, {padding:[36,36]});
+}
+
+/* ---------- Googleマップ全ルート・コピー ---------- */
+function openGmapAll(){
+  if(!lastResult || !lastResult.plan.stops.length) return;
+  const {start, plan} = lastResult;
+  const stops = plan.stops;
+  const last = stops[stops.length-1].row;
+  let url = 'https://www.google.com/maps/dir/?api=1&travelmode=driving' +
+    '&origin=' + start.lat + ',' + start.lon +
+    '&destination=' + last.lat + ',' + last.lon;
+  const way = stops.slice(0,-1).map(s=>s.row.lat+','+s.row.lon).join('|');
+  if(way) url += '&waypoints=' + encodeURIComponent(way);
+  if(stops.length > 10) alert('件数が多いため、Googleマップでは途中までしか表示されないことがあります。その場合は表の「この区間をナビで開く」を1区間ずつ使ってください。');
+  window.open(url, '_blank');
+}
+function copySchedule(){
+  if(!lastResult) return;
+  const {plan, cfg} = lastResult;
+  let txt = '【今日のまわり順】\n';
+  plan.stops.forEach((s,i)=>{
+    txt += `${i+1}. ${minToHm(s.arrive)}着 ${s.row.name||s.row.addr}(${s.row.type==='in'?'室内':'外観'})\n`;
+  });
+  txt += `終了予定 ${minToHm(plan.endMin)}\n`;
+  if(plan.skipped.length) txt += '\n▼時間内に入らない物件\n' + plan.skipped.map(r=>'・'+(r.name||r.addr)).join('\n') + '\n';
+  navigator.clipboard.writeText(txt).then(
+    ()=>alert('コピーしました!LINEなどに貼り付けできます。'),
+    ()=>alert('コピーできませんでした。'));
+}
+
+/* ---------- 現在地 ---------- */
+function useGeo(){
+  if(!navigator.geolocation){ alert('この環境では現在地が使えません。住所を入力してください。'); return; }
+  setStatus('現在地を取得しています…');
+  navigator.geolocation.getCurrentPosition(
+    p=>{
+      geoPos = {lat:p.coords.latitude, lon:p.coords.longitude};
+      $('#startAddr').value = '';
+      $('#startAddr').placeholder = '📍 現在地を使用中(住所を入れるとそちらを優先)';
+      setStatus('');
+      $('#geoBtn').textContent = '📍 現在地 取得済み ✓';
+    },
+    ()=>{ setStatus('現在地が取得できませんでした。出発地の住所を入力してください。', true); }
+  );
+}
+$('#startAddr').addEventListener('input', ()=>{ if($('#startAddr').value.trim()) geoPos=null; });
+
+/* ---------- イベント ---------- */
+$('#parseBtn').addEventListener('click', parseInput);
+$('#addRowBtn').addEventListener('click', ()=>{
+  rows.push({id:nextId++, name:'', addr:'', type:'out', lat:null, lon:null});
+  renderTable();
+});
+$('#calcBtn').addEventListener('click', calc);
+$('#geoBtn').addEventListener('click', useGeo);
+$('#gmapAllBtn').addEventListener('click', openGmapAll);
+$('#copyBtn').addEventListener('click', copySchedule);
+['startTime','endTime','durOut','durIn','margin','parkMin','startAddr'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', saveState);
+});
+$('#inputText').addEventListener('change', saveState);
+
+loadState();
+renderTable();
+</script>
+</body>
+</html>
