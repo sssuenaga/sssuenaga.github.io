@@ -222,41 +222,73 @@ function zenToHan(s){
   return s.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
           .replace(/[−―‐–ｰ－]/g,'-').replace(/　/g,' ');
 }
-const IN_RE  = /室内|内観|内部|居室|中の写真|空室|鍵|カギ/;
-const OUT_RE = /外観のみ|外のみ|現場写真|現場のみ|外だけ/;
+const IN_RE  = /室内|内観|内部|居室|中の写真|中も|お部屋|全部屋|入室|内見|空室|鍵|カギ|キーボックス/;
+const OUT_RE = /外観のみ|外のみ|外だけ|現場写真|現場のみ|外周り|外回り|外まわり/;
+const LABEL_RE = /^(?:住所|所在地|場所|現場|現地|物件名|物件|名称|建物名)[::]?\s*/;
+const GREET_RE = /お願い|よろしく|おはよう|お疲れ|こんにちは|明日|本日|撮影|リスト|一覧|以上|担当|時まで|時から/;
 const PREF = '(?:北海道|東京都|京都府|大阪府|[一-龯]{2,3}県)';
-const ACHR = '[0-9一-龯々ヶァ-ンぁ-んa-zA-Z\\-]';
+const ACHR = '[0-9一-龯々〆ぁ-んァ-ヶーa-zA-Z\\-]';
 
+function stripLead(line){
+  // 行頭の番号・記号・かっこ(①、1.、・、【】など)をまとめて除去
+  return line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,3}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯])|[・･\-*＊■□●○◎▼▶>≫【】\[\]()「」『』\s]+)+/,'').trim();
+}
 function extractAddress(line){
-  let m = line.match(new RegExp(PREF + ACHR + '{3,45}'));
-  if(!m) m = line.match(new RegExp('[一-龯]{1,6}[市区]' + ACHR + '{2,45}'));
-  if(!m) m = line.match(new RegExp('[一-龯]{1,6}[町村]' + ACHR + '{2,45}'));
+  line = line.replace(LABEL_RE,'');
+  let m = line.match(new RegExp(PREF + ACHR + '{3,50}'));
+  if(!m) m = line.match(new RegExp('[一-龯]{1,6}[市区郡]' + ACHR + '{2,50}'));
+  if(!m) m = line.match(new RegExp('[一-龯]{2,8}[町村]' + ACHR + '{2,50}'));
   if(!m) return null;
   let addr = m[0];
-  // 番地の数字の後ろに建物名がくっついた場合、数字の並びまでで切る
-  const cut = addr.match(/^(.*?\d+(?:-\d+)*(?:号|番地|番|階|F)?)[^0-9-]/);
+  // 番地(2丁目8番1号 / 2-8-1 など)の後ろに建物名がくっついていたら切り離す
+  const cut = addr.match(/^(.*?\d+(?:(?:丁目|番地|番|号|-)\d+)*(?:丁目|番地|番|号)?)/);
   if(cut && /\d/.test(cut[1])) addr = cut[1];
   return {addr:addr, index:m.index};
+}
+function looksLikeName(s){
+  return !!s && s.length>=2 && s.length<=30 && !GREET_RE.test(s) && !/^\d+$/.test(s);
+}
+function cleanName(s){
+  return s
+    .replace(LABEL_RE,'')
+    .replace(new RegExp(IN_RE.source,'g'),'').replace(new RegExp(OUT_RE.source,'g'),'')
+    .replace(/外観|室内|内観|撮影|写真|お願いします|お願い|します|よろしく|あり|なし|のみ|だけ|です|ます|、|。/g,'')
+    .replace(/^[のもをはにでとが・:\s]+|[のもをはにでとが・:\s]+$/g,'').trim();
 }
 
 function parseInput(quiet){
   const text = zenToHan($('#inputText').value);
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r?\n/).map(l=>l.trim());
+  // 各行の住所を先に調べる
+  const info = lines.map(l=>{
+    const s = stripLead(l);
+    return {raw:l, s:s, hit: s ? extractAddress(s) : null};
+  });
   const found = [];
-  for(let raw of lines){
-    let line = raw.trim();
-    if(!line) continue;
-    // 先頭の番号・記号(①、1.、・など)を除去
-    line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯])|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
-    const hit = extractAddress(line);
-    if(!hit) continue;
-    if(found.some(f=>f.addr===hit.addr)) continue;   // 同じ住所は1件にまとめる
-    const type = IN_RE.test(raw) ? 'in' : 'out';
-    let name = (line.slice(0,hit.index) + ' ' + line.slice(hit.index + hit.addr.length))
-      .replace(IN_RE,'').replace(OUT_RE,'')
-      .replace(/外観|室内|内観|撮影|写真|お願いします|お願い|します|よろしく|あり|なし|のみ|だけ|です|、|。/g,'')
-      .replace(/^[のもをはにでとが・\s]+|[のもをはにでとが・\s]+$/g,'').trim();
-    found.push({id:nextId++, name:name, addr:hit.addr, type:type, lat:null, lon:null});
+  const missed = [];
+  for(let i=0;i<info.length;i++){
+    const it = info[i];
+    if(!it.hit){
+      // 住所らしき情報がありそうなのに読めなかった行を記録
+      if(it.s && it.s.length>=6 && /\d/.test(it.s) && /[一-龯]/.test(it.s) && !GREET_RE.test(it.s)) missed.push(it.raw);
+      continue;
+    }
+    // この物件の説明 = この行 + 次の住所行の手前まで(ただし次の物件の名前らしき行は除く)
+    let ctx = it.s;
+    for(let j=i+1; j<info.length && !info[j].hit; j++){
+      const isNextName = (j+1<info.length) && info[j+1].hit && looksLikeName(info[j].s);
+      if(isNextName) break;
+      ctx += '\n' + info[j].raw;
+    }
+    // 物件名: 同じ行の住所以外の部分 → なければ直前の行(物件名だけの行)
+    let name = cleanName(it.s.slice(0,it.hit.index) + ' ' + it.s.slice(it.hit.index + it.hit.addr.length));
+    if(!name && i>0 && !info[i-1].hit && looksLikeName(info[i-1].s)){
+      name = cleanName(info[i-1].s);
+    }
+    const type = IN_RE.test(ctx) ? 'in' : 'out';
+    // 同じ住所でも部屋(名前)が違えば別物件として残す
+    if(found.some(f=>f.addr===it.hit.addr && f.name===name && f.type===type)) continue;
+    found.push({id:nextId++, name:name, addr:it.hit.addr, type:type, lat:null, lon:null});
   }
   if(!found.length){
     if(quiet!==true) alert('住所が見つかりませんでした。\n「○○市」「○○区」などが入った行が物件として認識されます。\n下の一覧に手で追加することもできます。');
@@ -266,6 +298,11 @@ function parseInput(quiet){
   rows = found;
   renderTable();
   saveState();
+  if(missed.length){
+    setStatus(`${found.length}件読み込みました。ただし読み取れなかった行が${missed.length}行あります(例:「${missed[0].slice(0,22)}」)。物件が漏れている場合はステップ2で手で追加するか、住所の書き方を少し直して再度お試しください。`, true);
+  }else{
+    setStatus(`${found.length}件読み込みました。ステップ2の一覧を確認してください。`);
+  }
 }
 
 /* ---------- 一覧テーブル ---------- */
@@ -722,10 +759,29 @@ async function getTessWorker(){
   }
   return tessWorker;
 }
+async function prepForOcr(imgLike){
+  // 文字認識しやすいように、小さめの画像は拡大しておく(canvasはPDF由来なのでそのまま)
+  if(imgLike && imgLike.tagName === 'CANVAS') return imgLike;
+  const img = await new Promise((res,rej)=>{
+    const im = new Image();
+    im.onload = ()=>res(im);
+    im.onerror = ()=>rej(new Error('画像を開けませんでした(対応していない形式の可能性があります)'));
+    im.src = URL.createObjectURL(imgLike);
+  });
+  const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+  const scale = maxDim < 1500 ? Math.min(3, 1500/maxDim) : 1;
+  if(scale <= 1) return img;
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth*scale);
+  c.height = Math.round(img.naturalHeight*scale);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
 async function ocrImage(imgLike, label){
   const worker = await getTessWorker();
   setStatus((label||'写真')+' の文字を認識しています…');
-  const {data} = await worker.recognize(imgLike);
+  const target = await prepForOcr(imgLike);
+  const {data} = await worker.recognize(target);
   return data.text||'';
 }
 // 日本語OCRにありがちな「文字の間の余計なスペース」を除去
@@ -742,8 +798,7 @@ function appendImported(text, srcName){
   const ta = $('#inputText');
   ta.value = (ta.value.trim()? ta.value.trim()+'\n' : '') + text;
   saveState();
-  parseInput(true);
-  if(rows.length) setStatus(srcName+'から読み込みました。ステップ2の一覧で住所が正しいか確認してください。');
+  parseInput(true);   // 件数や読み取れなかった行はparseInput側が表示する
 }
 async function importPdf(file){
   try{
