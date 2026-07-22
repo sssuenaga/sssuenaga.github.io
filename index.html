@@ -113,6 +113,7 @@
       <button class="btn" id="parseBtn">▼ 文章を読み取って一覧にする</button>
       <button class="btn-sub" id="pdfBtn">📄 PDFから読み込む</button>
       <button class="btn-sub" id="imgBtn">📷 写真から読み込む</button>
+      <button class="btn-sub" id="resetBtn" style="background:#fce8e6; color:var(--warn); margin-left:auto;">🔄 リセット(全部消す)</button>
       <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden multiple>
       <input type="file" id="imgFile" accept="image/*" hidden multiple>
     </div>
@@ -988,12 +989,14 @@ $('#pdfFile').addEventListener('change', async e=>{
     await importPdf(files[i]);
   }
 });
-$('#clearBtn').addEventListener('click', ()=>{
+function resetAll(){
   if(!confirm('物件リストと貼り付けた文章を全部消します。よろしいですか?')) return;
   rows = []; $('#inputText').value = '';
   renderTable(); saveState(); setStatus('');
   $('#resultCard').style.display = 'none';
-});
+}
+$('#clearBtn').addEventListener('click', resetAll);
+$('#resetBtn').addEventListener('click', resetAll);
 $('#imgFile').addEventListener('change', e=>{ if(e.target.files.length) importImages(Array.from(e.target.files)); e.target.value=''; });
 ['startTime','endTime','durOut','durIn','margin','parkMin','startAddr','roundTrip'].forEach(id=>{
   document.getElementById(id).addEventListener('change', saveState);
