@@ -65,6 +65,10 @@
   .numicon{background:var(--main); color:#fff; border-radius:50%; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:14px; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.4);}
   .numicon.start{background:var(--orange);}
   .skiplist{background:#fef7e0; border:1px solid #f5d97e; border-radius:8px; padding:10px 14px; margin-top:12px; font-size:14px;}
+  .patternbar{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .patbtn{background:#eef2f8; color:var(--text); border:2px solid var(--line); border-radius:10px; padding:8px 12px; font-size:12.5px; text-align:left; line-height:1.45;}
+  .patbtn b{font-size:13.5px;}
+  .patbtn.sel{border-color:var(--main); background:#e8f0fe; color:var(--main-dark);}
   .actionsrow{display:flex; flex-wrap:wrap; gap:10px; margin-top:14px;}
   footer{text-align:center; color:var(--sub); font-size:12px; padding:20px;}
   @media (max-width:600px){ td, th{padding:5px 4px;} main{padding:8px;} }
@@ -152,6 +156,7 @@
 
   <div class="card" id="resultCard" style="display:none;">
     <h2><span class="stepnum">✓</span>今日のまわり順</h2>
+    <div class="patternbar" id="patternBar"></div>
     <div class="summary" id="summary"></div>
     <table class="sched"><tbody id="schedBody"></tbody></table>
     <div id="skipped"></div>
@@ -349,9 +354,9 @@ async function buildMatrix(pts){
 }
 
 /* ---------- ルート最適化(最近傍法+2-opt) ---------- */
-function nearestNeighbor(m, n){        // 訪問先はマトリクス index 1..n、始点は0
-  const left = new Set(); for(let i=1;i<=n;i++) left.add(i);
-  const order = []; let cur = 0;
+function nnOrder(m, indices, startFrom){   // 指定した訪問先を近い順にたどる(始点 startFrom)
+  const left = new Set(indices);
+  const order = []; let cur = startFrom;
   while(left.size){
     let best=null, bd=Infinity;
     for(const i of left){ if(m[cur][i]<bd){bd=m[cur][i]; best=i;} }
@@ -365,12 +370,12 @@ function pathCost(m, order, roundTrip){
   if(roundTrip && order.length) c += m[prev][0];   // 出発地へ戻る分
   return c;
 }
-function twoOpt(m, order, roundTrip){
+function twoOpt(m, order, roundTrip, lockFirst){
   order = order.slice();
   let improved = true;
   while(improved){
     improved = false;
-    for(let i=0;i<order.length-1;i++){
+    for(let i=(lockFirst?1:0);i<order.length-1;i++){
       for(let j=i+1;j<order.length;j++){
         const cand = order.slice(0,i).concat(order.slice(i,j+1).reverse(), order.slice(j+1));
         if(pathCost(m,cand,roundTrip) < pathCost(m,order,roundTrip)-0.5){ order=cand; improved=true; }
@@ -416,13 +421,13 @@ function buildSchedule(m, order, list, cfg){
   }
   return {stops:stops, returnTravel:returnTravel, endMin:t};
 }
-function planRoute(m, list, cfg){
-  let order = twoOpt(m, nearestNeighbor(m, list.length), cfg.roundTrip);
+function trimToFit(m, order, list, cfg, reopt){
+  // リミットに収まるまで、「外すと一番早く終わる」物件を1件ずつ外す
+  order = order.slice();
   const skipped = [];
   while(order.length){
     const s = buildSchedule(m, order, list, cfg);
     if(s.endMin <= cfg.endLimit) return {stops:s.stops, returnTravel:s.returnTravel, endMin:s.endMin, skipped:skipped};
-    // 1件ずつ「外してみたら何時に終わるか」を全部試し、一番早く終わる外し方を採用
     let bi=0, bestEnd=Infinity;
     for(let i=0;i<order.length;i++){
       const cand = order.slice(); cand.splice(i,1);
@@ -431,9 +436,53 @@ function planRoute(m, list, cfg){
     }
     skipped.push(list[order[bi]-1]);
     order.splice(bi,1);
-    order = twoOpt(m, order, cfg.roundTrip);
+    if(reopt) order = twoOpt(m, order, cfg.roundTrip);
   }
   return {stops:[], returnTravel:null, endMin:cfg.startMin, skipped:skipped};
+}
+function buildCandidates(m, list, cfg){
+  const all = []; for(let i=1;i<=list.length;i++) all.push(i);
+  const inIdx  = all.filter(i=>list[i-1].type==='in');
+  const outIdx = all.filter(i=>list[i-1].type==='out');
+  const cands = [];
+
+  // パターン1: 最短ルート
+  const bestOrder = twoOpt(m, nnOrder(m, all, 0), cfg.roundTrip);
+  cands.push(Object.assign({label:'最短ルート'}, trimToFit(m, bestOrder, list, cfg, true)));
+
+  // パターン2・3: 室内を先に / 外観を先に(両タイプがある場合のみ)
+  if(inIdx.length && outIdx.length){
+    const i1 = nnOrder(m, inIdx, 0);
+    const i2 = nnOrder(m, outIdx, i1[i1.length-1]);
+    cands.push(Object.assign({label:'室内を先に'}, trimToFit(m, i1.concat(i2), list, cfg, false)));
+    const o1 = nnOrder(m, outIdx, 0);
+    const o2 = nnOrder(m, inIdx, o1[o1.length-1]);
+    cands.push(Object.assign({label:'外観を先に'}, trimToFit(m, o1.concat(o2), list, cfg, false)));
+  }
+
+  // 別ルート案: 最初に行く物件を変えた次善ルート(良い順)
+  const alts = [];
+  for(const k of all){
+    if(k === bestOrder[0]) continue;
+    let o = [k].concat(nnOrder(m, all.filter(i=>i!==k), k));
+    o = twoOpt(m, o, cfg.roundTrip, true);
+    alts.push(Object.assign({label:'別ルート案'}, trimToFit(m, o, list, cfg, false)));
+  }
+  alts.sort((a,b)=> (b.stops.length - a.stops.length) || (a.endMin - b.endMin));
+  alts.forEach(a=>cands.push(a));
+
+  // 同じ回り順の候補を除いて最大4パターン
+  const seen = new Set(), out = [];
+  for(const c of cands){
+    if(!c.stops.length) continue;
+    const key = c.stops.map(s=>s.row.id).join('>');
+    if(seen.has(key)) continue;
+    seen.add(key);
+    out.push(c);
+    if(out.length>=4) break;
+  }
+  if(!out.length) out.push(cands[0] || Object.assign({label:'最短ルート'}, trimToFit(m, bestOrder, list, cfg, true)));
+  return out;
 }
 
 /* ---------- メイン計算 ---------- */
@@ -482,11 +531,11 @@ async function calc(){
     const pts = [start].concat(ok);
     const {matrix, approx} = await buildMatrix(pts);
 
-    setStatus('一番速いまわり順を考えています…');
+    setStatus('いくつかのまわり方を比べています…');
     const cfg = readCfg();
-    const plan = planRoute(matrix, ok, cfg);
+    const plans = buildCandidates(matrix, ok, cfg);
 
-    lastResult = {start:start, plan:plan, cfg:cfg, approx:approx, failed:failed};
+    lastResult = {start:start, plans:plans, sel:0, cfg:cfg, approx:approx, failed:failed};
     renderResult();
     setStatus('');
   }catch(e){
@@ -501,8 +550,22 @@ function gmapLink(a, b){
          '&destination=' + b.lat + ',' + b.lon + '&travelmode=driving';
 }
 function renderResult(){
-  const {start, plan, cfg, approx, failed} = lastResult;
+  const {start, plans, cfg, approx, failed} = lastResult;
+  const plan = plans[lastResult.sel];
   $('#resultCard').style.display = 'block';
+
+  // パターン切り替えボタン
+  const pb = $('#patternBar'); pb.innerHTML = '';
+  if(plans.length > 1){
+    plans.forEach((p,i)=>{
+      const b = document.createElement('button');
+      b.className = 'patbtn' + (i===lastResult.sel ? ' sel' : '');
+      const endLabel = p.returnTravel!=null ? '帰着' : '終了';
+      b.innerHTML = `<b>パターン${i+1}:${p.label}</b><br>${p.stops.length}件・${minToHm(p.endMin)}${endLabel}`;
+      b.addEventListener('click', ()=>{ lastResult.sel = i; renderResult(); });
+      pb.appendChild(b);
+    });
+  }
 
   // サマリー
   const nIn = plan.stops.filter(s=>s.row.type==='in').length;
@@ -566,7 +629,8 @@ function renderResult(){
 
 function drawMap(){
   if(typeof L === 'undefined') return;   // オフライン等でLeafletが読めない場合
-  const {start, plan} = lastResult;
+  const start = lastResult.start;
+  const plan = lastResult.plans[lastResult.sel];
   if(!map){
     map = L.map('map');
     L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',
@@ -588,8 +652,10 @@ function drawMap(){
 
 /* ---------- Googleマップ全ルート・コピー ---------- */
 function openGmapAll(){
-  if(!lastResult || !lastResult.plan.stops.length) return;
-  const {start, plan} = lastResult;
+  if(!lastResult) return;
+  const start = lastResult.start;
+  const plan = lastResult.plans[lastResult.sel];
+  if(!plan.stops.length) return;
   const stops = plan.stops;
   const round = plan.returnTravel!=null;
   const last = stops[stops.length-1].row;
@@ -604,8 +670,8 @@ function openGmapAll(){
 }
 function copySchedule(){
   if(!lastResult) return;
-  const {plan, cfg} = lastResult;
-  let txt = '【今日のまわり順】\n';
+  const plan = lastResult.plans[lastResult.sel];
+  let txt = `【今日のまわり順(${plan.label})】\n`;
   plan.stops.forEach((s,i)=>{
     txt += `${i+1}. ${minToHm(s.arrive)}着 ${s.row.name||s.row.addr}(${s.row.type==='in'?'室内':'外観'})\n`;
   });
