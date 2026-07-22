@@ -448,8 +448,15 @@ function buildCandidates(m, list, cfg){
   const outIdx = all.filter(i=>list[i-1].type==='out');
   const cands = [];
 
-  // パターン1: 最短ルート
-  const bestOrder = twoOpt(m, nnOrder(m, all, 0), cfg.roundTrip);
+  // パターン1: 最短ルート(最初に行く物件を全通り試して一番速いもの)
+  let bestOrder = twoOpt(m, nnOrder(m, all, 0), cfg.roundTrip);
+  let bestCost = pathCost(m, bestOrder, cfg.roundTrip);
+  for(const k of all){
+    let o = [k].concat(nnOrder(m, all.filter(i=>i!==k), k));
+    o = twoOpt(m, o, cfg.roundTrip, true);
+    const c = pathCost(m, o, cfg.roundTrip);
+    if(c < bestCost - 0.5){ bestCost = c; bestOrder = o; }
+  }
   cands.push(Object.assign({label:'最短ルート'}, trimToFit(m, bestOrder, list, cfg, true)));
 
   // パターン2・3: 室内を先に / 外観を先に(両タイプがある場合のみ)
