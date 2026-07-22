@@ -113,10 +113,10 @@
       <button class="btn" id="parseBtn">▼ 文章を読み取って一覧にする</button>
       <button class="btn-sub" id="pdfBtn">📄 PDFから読み込む</button>
       <button class="btn-sub" id="imgBtn">📷 写真から読み込む</button>
-      <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
+      <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden multiple>
       <input type="file" id="imgFile" accept="image/*" hidden multiple>
     </div>
-    <div class="hint" style="margin-top:8px;">※ 写真や文字なしPDFは「文字認識」で読み取ります。1回目だけ認識部品のダウンロード(約15MB)があるため数分かかることがあります。読み取り後は必ず一覧で住所を確認してください。</div>
+    <div class="hint" style="margin-top:8px;">※ PDFも写真も<b>一度に複数選べます</b>。文章・PDF・写真を続けて読み込むと、全部まとめて1つのリストになります(同じ住所は自動で1件にまとめます)。写真や文字なしPDFは「文字認識」で読み取るため、1回目だけ部品のダウンロード(約15MB)で数分かかることがあります。読み取り後は必ず一覧で住所を確認してください。</div>
   </div>
 
   <div class="card">
@@ -126,8 +126,9 @@
       <thead><tr><th style="width:28px;">#</th><th>物件名・メモ</th><th>住所</th><th style="width:100px;">撮影の種類</th><th style="width:36px;"></th></tr></thead>
       <tbody id="propBody"></tbody>
     </table>
-    <div style="margin-top:10px;">
+    <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
       <button class="btn-sub" id="addRowBtn">＋ 手で1件追加する</button>
+      <button class="btn-sub" id="clearBtn" style="background:#fce8e6; color:var(--warn);">🗑 リストを全部消す</button>
     </div>
   </div>
 
@@ -249,6 +250,7 @@ function parseInput(quiet){
     line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯])|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
     const hit = extractAddress(line);
     if(!hit) continue;
+    if(found.some(f=>f.addr===hit.addr)) continue;   // 同じ住所は1件にまとめる
     const type = IN_RE.test(raw) ? 'in' : 'out';
     let name = (line.slice(0,hit.index) + ' ' + line.slice(hit.index + hit.addr.length))
       .replace(IN_RE,'').replace(OUT_RE,'')
@@ -810,7 +812,19 @@ $('#gmapAllBtn').addEventListener('click', openGmapAll);
 $('#copyBtn').addEventListener('click', copySchedule);
 $('#pdfBtn').addEventListener('click', ()=>$('#pdfFile').click());
 $('#imgBtn').addEventListener('click', ()=>$('#imgFile').click());
-$('#pdfFile').addEventListener('change', e=>{ if(e.target.files[0]) importPdf(e.target.files[0]); e.target.value=''; });
+$('#pdfFile').addEventListener('change', async e=>{
+  const files = Array.from(e.target.files); e.target.value='';
+  for(let i=0;i<files.length;i++){
+    setStatus(`PDF ${i+1}/${files.length} を読み込んでいます…`);
+    await importPdf(files[i]);
+  }
+});
+$('#clearBtn').addEventListener('click', ()=>{
+  if(!confirm('物件リストと貼り付けた文章を全部消します。よろしいですか?')) return;
+  rows = []; $('#inputText').value = '';
+  renderTable(); saveState(); setStatus('');
+  $('#resultCard').style.display = 'none';
+});
 $('#imgFile').addEventListener('change', e=>{ if(e.target.files.length) importImages(Array.from(e.target.files)); e.target.value=''; });
 ['startTime','endTime','durOut','durIn','margin','parkMin','startAddr','roundTrip'].forEach(id=>{
   document.getElementById(id).addEventListener('change', saveState);
