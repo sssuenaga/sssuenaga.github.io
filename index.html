@@ -255,7 +255,7 @@ function cleanName(s){
   return s
     .replace(LABEL_RE,'')
     .replace(new RegExp(IN_RE.source,'g'),'').replace(new RegExp(OUT_RE.source,'g'),'')
-    .replace(/外観|室内|内観|撮影|写真|お願いします|お願い|します|よろしく|あり|なし|のみ|だけ|です|ます|、|。/g,'')
+    .replace(/外観|室内|内観|撮影|写真|住所|所在地|物件名|名称|お願いします|お願い|します|よろしく|あり|なし|のみ|だけ|です|ます|、|。/g,'')
     .replace(/^[のもをはにでとが・:\s]+|[のもをはにでとが・:\s]+$/g,'').trim();
 }
 
