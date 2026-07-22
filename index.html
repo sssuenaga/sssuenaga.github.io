@@ -830,6 +830,76 @@ function cleanOcrText(t){
     .replace(/(\d)\s*[一ー―~〜]\s*(?=\d)/g,'$1-')   // 数字にはさまれた「一」「ー」はハイフンの読み間違い
     .replace(/(\d)\s*[oOＯｏ]\s*(?=\d|$)/gm,'$10'); // 数字の並びの中のオーは0の読み間違い
 }
+/* --- 物件チラシ(販売図面)の自動判定と所在地の抜き出し --- */
+function isFlyer(text){
+  const re = /販売価格|物件概要|建物面積|土地面積|敷地面積|間取|徒歩|万円|LDK|号棟|新築戸建|販売図面|完成予定/g;
+  const hits = new Set();
+  let m; while((m = re.exec(text))) hits.add(m[0]);
+  return hits.size >= 3;
+}
+function findAllAddresses(line){
+  const out = []; let off = 0, rest = line;
+  while(rest){
+    const h = extractAddress(rest);
+    if(!h) break;
+    out.push({addr:h.addr, index:off + h.index});
+    const adv = h.index + h.addr.length;
+    if(adv <= 0) break;
+    rest = rest.slice(adv); off += adv;
+  }
+  return out;
+}
+function normAddrKey(a){
+  return zenToHan(a).replace(/^(?:北海道|東京都|京都府|大阪府|[一-龯]{2,3}県)/,'')
+    .replace(/丁目|番地|番|号/g,'-').replace(/-{2,}/g,'-').replace(/-$/,'');
+}
+function extractFlyerAddress(text){
+  const lines = text.split(/\r?\n/);
+  const groups = {};
+  for(let i=0;i<lines.length;i++){
+    const line = zenToHan(lines[i]);
+    for(const c of findAllAddresses(line)){
+      let sc = 1;
+      const before = line.slice(0, c.index) + ' ' + (i>0 ? zenToHan(lines[i-1]).slice(-15) : '');
+      if(/所在地|現地|住所|カーナビ|物件/.test(before)) sc += 5;                      // 物件の住所の手がかり
+      if(/〒|TEL|FAX|電話|株式会社|\(株\)|有限会社|免許|宅建|営業時間|本社|支店|ホールディングス|グループ/.test(line)) sc -= 6;  // 会社の住所の手がかり
+      if(/\d/.test(c.addr)) sc += 1;
+      const key = normAddrKey(c.addr);
+      if(!key || key.length < 4) continue;
+      if(!groups[key]) groups[key] = {score:0, n:0, best:c.addr};
+      const g = groups[key];
+      g.score += sc; g.n++;
+      if(c.addr.length > g.best.length) g.best = c.addr;   // 県名付きなど、一番詳しい表記を採用
+    }
+  }
+  let bestKey = null, bestVal = -1e9;
+  for(const k in groups){
+    const g = groups[k];
+    const v = g.score + Math.min(g.n, 4) * 1.5;   // 何度も出てくる住所(物件)を優遇
+    if(v > bestVal){ bestVal = v; bestKey = k; }
+  }
+  if(!bestKey || bestVal <= 0) return null;
+  return groups[bestKey].best;
+}
+function finishImport(text, srcName, fileName){
+  const t = cleanOcrText(zenToHan(text));
+  if(isFlyer(t)){
+    const addr = extractFlyerAddress(t);
+    if(addr){
+      let nm = '';
+      if(fileName){
+        nm = fileName.replace(/\.[^.]+$/,'').trim();
+        if(/^(?:IMG|DSC|image|photo|screenshot|スクリーンショット|写真)/i.test(nm) || /^[\d\-_ ]+$/.test(nm)) nm = '';
+      }
+      appendImported(addr + (nm ? ' ' + nm : ''), srcName);
+      const st = $('#status');
+      if(st.textContent && st.className !== 'err') st.textContent += ' ※物件チラシと判定し、所在地だけを抜き出しました。';
+      return;
+    }
+  }
+  appendImported(text, srcName);
+}
+
 function appendImported(text, srcName){
   text = cleanOcrText(text).split(/\r?\n/).map(l=>l.trim()).filter(l=>l).join('\n');
   if(!text){ setStatus(srcName+'から文字を読み取れませんでした。', true); return; }
@@ -870,16 +940,15 @@ async function importPdf(file){
         text += await ocrImage(c, 'PDF '+p+'/'+maxP+'ページ') + '\n';
       }
     }
-    appendImported(text, 'PDF');
+    finishImport(text, 'PDF', file.name);
   }catch(e){ setStatus('PDFの読み込みに失敗しました:'+e.message, true); }
 }
 async function importImages(files){
   try{
-    let text='';
     for(let i=0;i<files.length;i++){
-      text += await ocrImage(files[i], '写真 '+(i+1)+'/'+files.length) + '\n';
+      const t = await ocrImage(files[i], '写真 '+(i+1)+'/'+files.length);
+      finishImport(t, '写真', files[i].name);   // 1枚ずつ判定(チラシ写真とリスト写真が混ざってもOK)
     }
-    appendImported(text, '写真');
   }catch(e){ setStatus('写真の文字認識に失敗しました:'+e.message, true); }
 }
 
