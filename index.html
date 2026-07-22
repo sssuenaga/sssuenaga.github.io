@@ -1147,6 +1147,23 @@ $('#imgFile').addEventListener('change', e=>{ if(e.target.files.length) importIm
   document.getElementById(id).addEventListener('change', saveState);
 });
 $('#inputText').addEventListener('change', saveState);
+// チラシの文章を貼り付けたら、その場で住所1件に自動変換
+$('#inputText').addEventListener('paste', e=>{
+  let txt = '';
+  try{ txt = (e.clipboardData || window.clipboardData).getData('text') || ''; }catch(err){}
+  if(!txt) return;
+  const clean = cleanOcrText(zenToHan(txt));
+  if(!isFlyer(clean)) return;               // 普通の物件リストはそのまま貼り付け
+  const addr = extractFlyerAddress(clean);
+  if(!addr) return;
+  e.preventDefault();
+  const ta = $('#inputText');
+  ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') + addr + ' 外観のみ';
+  saveState();
+  parseInput(true);
+  const st = $('#status');
+  if(st.textContent && st.className !== 'err') st.textContent += ' ※チラシの文章と判定し、所在地だけを抜き出しました。';
+});
 
 loadState();
 renderTable();
