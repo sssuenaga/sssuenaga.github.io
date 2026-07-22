@@ -231,7 +231,7 @@ const ACHR = '[0-9一-龯々〆ぁ-んァ-ヶーa-zA-Z\\-]';
 
 function stripLead(line){
   // 行頭の番号・記号・かっこ(①、1.、・、【】など)をまとめて除去
-  return line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,3}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯])|[・･\-*＊■□●○◎▼▶>≫【】\[\]()「」『』\s]+)+/,'').trim();
+  return line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,3}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯ぁ-んァ-ヶ])|[・･\-*＊■□●○◎▼▶>≫【】\[\]()「」『』\s]+)+/,'').trim();
 }
 function extractAddress(line){
   line = line.replace(LABEL_RE,'');
@@ -265,14 +265,10 @@ function parseInput(quiet){
     return {raw:l, s:s, hit: s ? extractAddress(s) : null};
   });
   const found = [];
-  const missed = [];
+  const usedName = new Set();
   for(let i=0;i<info.length;i++){
     const it = info[i];
-    if(!it.hit){
-      // 住所らしき情報がありそうなのに読めなかった行を記録
-      if(it.s && it.s.length>=6 && /\d/.test(it.s) && /[一-龯]/.test(it.s) && !GREET_RE.test(it.s)) missed.push(it.raw);
-      continue;
-    }
+    if(!it.hit) continue;
     // この物件の説明 = この行 + 次の住所行の手前まで(ただし次の物件の名前らしき行は除く)
     let ctx = it.s;
     for(let j=i+1; j<info.length && !info[j].hit; j++){
@@ -284,12 +280,19 @@ function parseInput(quiet){
     let name = cleanName(it.s.slice(0,it.hit.index) + ' ' + it.s.slice(it.hit.index + it.hit.addr.length));
     if(!name && i>0 && !info[i-1].hit && looksLikeName(info[i-1].s)){
       name = cleanName(info[i-1].s);
+      usedName.add(i-1);
     }
     const type = IN_RE.test(ctx) ? 'in' : 'out';
     // 同じ住所でも部屋(名前)が違えば別物件として残す
     if(found.some(f=>f.addr===it.hit.addr && f.name===name && f.type===type)) continue;
     found.push({id:nextId++, name:name, addr:it.hit.addr, type:type, lat:null, lon:null});
   }
+  // 住所らしき情報がありそうなのに読めなかった行(物件名として使った行は除く)
+  const missed = [];
+  info.forEach((it,i)=>{
+    if(it.hit || usedName.has(i)) return;
+    if(it.s && it.s.length>=6 && /\d/.test(it.s) && /[一-龯]/.test(it.s) && !GREET_RE.test(it.s)) missed.push(it.raw);
+  });
   if(!found.length){
     if(quiet!==true) alert('住所が見つかりませんでした。\n「○○市」「○○区」などが入った行が物件として認識されます。\n下の一覧に手で追加することもできます。');
     else setStatus('読み取った文字から住所が見つかりませんでした。ステップ1の文章を確認・修正してから「文章を読み取って一覧にする」を押してください。', true);
