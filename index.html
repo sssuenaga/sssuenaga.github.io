@@ -207,7 +207,12 @@ function loadState(){
 }
 
 /* ---------- 文章の読み取り ---------- */
+const RADICAL_FIX = {'⻄':'西','⻑':'長','⻘':'青','⻝':'食','⻯':'竜','⻲':'亀','⻤':'鬼','⻭':'歯','⻫':'斉','⻩':'黄','⻨':'麦','⻣':'骨','⺠':'民'};
 function zenToHan(s){
+  // NFKC正規化: PDFに多い部首字体(⼤→大 等)や全角英数を標準の文字に揃える
+  try{ s = s.normalize('NFKC'); }catch(e){}
+  // NFKCで直らない部首字体(⻄など)は変換表で対応
+  s = s.replace(/[⻄⻑⻘⻝⻯⻲⻤⻭⻫⻩⻨⻣⺠]/g, c=>RADICAL_FIX[c]||c);
   return s.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
           .replace(/[−―‐–ｰ－]/g,'-').replace(/　/g,' ');
 }
@@ -236,7 +241,7 @@ function parseInput(quiet){
     let line = raw.trim();
     if(!line) continue;
     // 先頭の番号・記号(①、1.、・など)を除去
-    line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
+    line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|\d{1,2}\s+|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
     const hit = extractAddress(line);
     if(!hit) continue;
     const type = IN_RE.test(raw) ? 'in' : 'out';
