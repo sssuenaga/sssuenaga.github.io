@@ -888,33 +888,50 @@ function findAllAddresses(line){
   }
   return out;
 }
+const KNUM = {'一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','十':'10'};
 function normAddrKey(a){
-  return zenToHan(a).replace(/^(?:北海道|東京都|京都府|大阪府|[一-龯]{2,3}県)/,'')
+  return zenToHan(a)
+    .replace(new RegExp('^' + PREF), '')
+    .replace(/[一二三四五六七八九十](?=丁目)/g, k=>KNUM[k])
+    .replace(/[ヶ]/g,'ケ')
     .replace(/丁目|番地|番|号/g,'-').replace(/-{2,}/g,'-').replace(/-$/,'');
 }
 function extractFlyerAddress(text){
-  const lines = text.split(/\r?\n/);
+  // 「太宰府市梅ケ丘1丁目」+次の行「19-12」のような折り返し住所を連結してから探す
+  const rawLines = text.split(/\r?\n/);
+  const lines = [];
+  for(let i=0;i<rawLines.length;i++){
+    let l = rawLines[i].trim();
+    const nxt = zenToHan((rawLines[i+1]||'').trim());
+    if(l && /^\d[\d\-]{0,11}$/.test(nxt) && /[丁目番号市区町村0-9-]$/.test(zenToHan(l))) l = l + nxt;
+    lines.push(l);
+  }
   const groups = {};
   for(let i=0;i<lines.length;i++){
     const line = zenToHan(lines[i]);
     for(const c of findAllAddresses(line)){
       let sc = 1;
       const before = line.slice(0, c.index) + ' ' + (i>0 ? zenToHan(lines[i-1]).slice(-15) : '');
-      if(/所在地|現地|住所|カーナビ|物件/.test(before)) sc += 5;                      // 物件の住所の手がかり
-      if(/〒|TEL|FAX|電話|株式会社|\(株\)|有限会社|免許|宅建|営業時間|本社|支店|ホールディングス|グループ/.test(line)) sc -= 6;  // 会社の住所の手がかり
+      if(/カーナビ|ナビ入力|ナビセット/.test(before)) sc += 8;                        // カーナビ用住所が最優先
+      else if(/所在地|現地|住所|物件/.test(before)) sc += 5;                          // 物件の住所の手がかり
+      if(/〒|TEL|FAX|電話|株式会社|\(株\)|有限会社|免許|宅建|営業時間|本社|支店|センター|ホールディングス|グループ/.test(line)) sc -= 6;  // 会社の住所の手がかり
+      const after = line.slice(c.index + c.addr.length, c.index + c.addr.length + 1);
+      if(/[期棟]/.test(after)) sc -= 3;                                              // 「〜1丁目3期」など分譲名の一部
+      if(/の一部|番\d+の/.test(line.slice(c.index, c.index + c.addr.length + 6))) sc -= 2;  // 登記の地番っぽい
       if(/\d/.test(c.addr)) sc += 1;
       const key = normAddrKey(c.addr);
       if(!key || key.length < 4) continue;
-      if(!groups[key]) groups[key] = {score:0, n:0, best:c.addr};
+      if(!groups[key]) groups[key] = {score:0, n:0, best:c.addr, navi:false};
       const g = groups[key];
       g.score += sc; g.n++;
+      if(/カーナビ|ナビ入力|ナビセット/.test(before)) g.navi = true;
       if(c.addr.length > g.best.length) g.best = c.addr;   // 県名付きなど、一番詳しい表記を採用
     }
   }
   let bestKey = null, bestVal = -1e9;
   for(const k in groups){
     const g = groups[k];
-    const v = g.score + Math.min(g.n, 4) * 1.5;   // 何度も出てくる住所(物件)を優遇
+    const v = g.score + Math.min(g.n, 4) * 1.5 + (g.navi ? 4 : 0);   // カーナビ表記と繰り返し出現を優遇
     if(v > bestVal){ bestVal = v; bestKey = k; }
   }
   if(!bestKey || bestVal <= 0) return null;
