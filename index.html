@@ -246,7 +246,7 @@ function parseInput(quiet){
     let line = raw.trim();
     if(!line) continue;
     // 先頭の番号・記号(①、1.、・など)を除去
-    line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|\d{1,2}\s+|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
+    line = line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,2}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯])|[・･\-*■□●○▼▶>]+)\s*/,'').trim();
     const hit = extractAddress(line);
     if(!hit) continue;
     const type = IN_RE.test(raw) ? 'in' : 'out';
