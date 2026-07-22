@@ -249,7 +249,8 @@ function extractAddress(line){
   return {addr:addr, index: off + m.index};
 }
 function looksLikeName(s){
-  return !!s && s.length>=2 && s.length<=30 && !GREET_RE.test(s) && !/^\d+$/.test(s);
+  return !!s && s.length>=2 && s.length<=30 && !GREET_RE.test(s) && !/^\d+$/.test(s)
+      && !IN_RE.test(s) && !OUT_RE.test(s) && !/^(?:外観|室内|内観|写真|撮影)/.test(s);
 }
 function cleanName(s){
   return s
