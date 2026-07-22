@@ -105,9 +105,14 @@
       「室内」「内観」などの言葉があると<b>室内撮影</b>、なければ<b>外観のみ</b>と判定します(あとで直せます)。
     </div>
     <textarea id="inputText" placeholder="例)&#10;明日お願いします&#10;①新宿区西新宿2-8-1 ○○ビル 外観のみ&#10;②渋谷区神南1-19-11 △△マンション101 室内あり&#10;③品川区大井1-1-1 現場写真"></textarea>
-    <div style="margin-top:8px;">
+    <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
       <button class="btn" id="parseBtn">▼ 文章を読み取って一覧にする</button>
+      <button class="btn-sub" id="pdfBtn">📄 PDFから読み込む</button>
+      <button class="btn-sub" id="imgBtn">📷 写真から読み込む</button>
+      <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
+      <input type="file" id="imgFile" accept="image/*" hidden multiple>
     </div>
+    <div class="hint" style="margin-top:8px;">※ 写真や文字なしPDFは「文字認識」で読み取ります。1回目だけ認識部品のダウンロード(約15MB)があるため数分かかることがあります。読み取り後は必ず一覧で住所を確認してください。</div>
   </div>
 
   <div class="card">
@@ -137,6 +142,7 @@
       <label>室内あり <input type="number" id="durIn" value="30" min="1" max="180" style="width:60px;">分/件</label>
       <label>移動時間の余裕 <input type="number" id="margin" value="20" min="0" max="100" style="width:60px;">%増し</label>
       <label>駐車・準備 <input type="number" id="parkMin" value="5" min="0" max="60" style="width:60px;">分/件</label>
+      <label style="font-weight:bold;"><input type="checkbox" id="roundTrip" checked> 最後に出発地へ戻る(往復)</label>
     </div>
     <div class="hint" style="margin-top:8px;">※ 設定は自動で保存されるので、次回からは入力不要です。</div>
   </div>
@@ -178,7 +184,8 @@ function saveState(){
     localStorage.setItem('routekun_text', $('#inputText').value);
     localStorage.setItem('routekun_cfg', JSON.stringify({
       startAddr:$('#startAddr').value, startTime:$('#startTime').value, endTime:$('#endTime').value,
-      durOut:$('#durOut').value, durIn:$('#durIn').value, margin:$('#margin').value, parkMin:$('#parkMin').value
+      durOut:$('#durOut').value, durIn:$('#durIn').value, margin:$('#margin').value, parkMin:$('#parkMin').value,
+      roundTrip:$('#roundTrip').checked
     }));
   }catch(e){}
 }
@@ -191,6 +198,7 @@ function loadState(){
       $('#endTime').value   = cfg.endTime||'14:30';
       $('#durOut').value = cfg.durOut||10; $('#durIn').value = cfg.durIn||30;
       $('#margin').value = cfg.margin!=null?cfg.margin:20; $('#parkMin').value = cfg.parkMin!=null?cfg.parkMin:5;
+      $('#roundTrip').checked = cfg.roundTrip!==false;
     }
     $('#inputText').value = localStorage.getItem('routekun_text')||'';
     const saved = JSON.parse(localStorage.getItem('routekun_rows')||'[]');
@@ -220,7 +228,7 @@ function extractAddress(line){
   return {addr:addr, index:m.index};
 }
 
-function parseInput(){
+function parseInput(quiet){
   const text = zenToHan($('#inputText').value);
   const lines = text.split(/\r?\n/);
   const found = [];
@@ -239,7 +247,8 @@ function parseInput(){
     found.push({id:nextId++, name:name, addr:hit.addr, type:type, lat:null, lon:null});
   }
   if(!found.length){
-    alert('住所が見つかりませんでした。\n「○○市」「○○区」などが入った行が物件として認識されます。\n下の一覧に手で追加することもできます。');
+    if(quiet!==true) alert('住所が見つかりませんでした。\n「○○市」「○○区」などが入った行が物件として認識されます。\n下の一覧に手で追加することもできます。');
+    else setStatus('読み取った文字から住所が見つかりませんでした。ステップ1の文章を確認・修正してから「文章を読み取って一覧にする」を押してください。', true);
     return;
   }
   rows = found;
@@ -345,12 +354,13 @@ function nearestNeighbor(m, n){        // 訪問先はマトリクス index 1..n
   }
   return order;
 }
-function pathCost(m, order){
+function pathCost(m, order, roundTrip){
   let c=0, prev=0;
   for(const i of order){ c+=m[prev][i]; prev=i; }
+  if(roundTrip && order.length) c += m[prev][0];   // 出発地へ戻る分
   return c;
 }
-function twoOpt(m, order){
+function twoOpt(m, order, roundTrip){
   order = order.slice();
   let improved = true;
   while(improved){
@@ -358,7 +368,7 @@ function twoOpt(m, order){
     for(let i=0;i<order.length-1;i++){
       for(let j=i+1;j<order.length;j++){
         const cand = order.slice(0,i).concat(order.slice(i,j+1).reverse(), order.slice(j+1));
-        if(pathCost(m,cand) < pathCost(m,order)-0.5){ order=cand; improved=true; }
+        if(pathCost(m,cand,roundTrip) < pathCost(m,order,roundTrip)-0.5){ order=cand; improved=true; }
       }
     }
   }
@@ -376,7 +386,8 @@ function readCfg(){
     durOut: +$('#durOut').value||10,
     durIn: +$('#durIn').value||30,
     margin: +$('#margin').value||0,
-    parkMin: +$('#parkMin').value||0
+    parkMin: +$('#parkMin').value||0,
+    roundTrip: $('#roundTrip').checked
   };
 }
 function travelMin(m, i, j, cfg){ return m[i][j]/60 * (1+cfg.margin/100); }
@@ -393,28 +404,31 @@ function buildSchedule(m, order, list, cfg){
     stops.push({row:r, matIdx:idx, travel:tv, arrive:arrive, depart:depart});
     t = depart; prev = idx;
   }
-  return {stops:stops, endMin:t};
+  let returnTravel = null;
+  if(cfg.roundTrip && stops.length){
+    returnTravel = travelMin(m, prev, 0, cfg);
+    t += returnTravel;
+  }
+  return {stops:stops, returnTravel:returnTravel, endMin:t};
 }
 function planRoute(m, list, cfg){
-  let order = twoOpt(m, nearestNeighbor(m, list.length));
+  let order = twoOpt(m, nearestNeighbor(m, list.length), cfg.roundTrip);
   const skipped = [];
   while(order.length){
     const s = buildSchedule(m, order, list, cfg);
-    if(s.endMin <= cfg.endLimit) return {stops:s.stops, endMin:s.endMin, skipped:skipped};
-    // 一番「重い」1件を外すと最も時間が浮く物件を除外
-    let bi=0, bestGain=-1;
+    if(s.endMin <= cfg.endLimit) return {stops:s.stops, returnTravel:s.returnTravel, endMin:s.endMin, skipped:skipped};
+    // 1件ずつ「外してみたら何時に終わるか」を全部試し、一番早く終わる外し方を採用
+    let bi=0, bestEnd=Infinity;
     for(let i=0;i<order.length;i++){
-      const prev = i===0?0:order[i-1];
-      const next = i===order.length-1?null:order[i+1];
-      let gain = travelMin(m,prev,order[i],cfg) + shootMin(list[order[i]-1],cfg);
-      if(next!==null) gain += travelMin(m,order[i],next,cfg) - travelMin(m,prev,next,cfg);
-      if(gain>bestGain){bestGain=gain; bi=i;}
+      const cand = order.slice(); cand.splice(i,1);
+      const e = buildSchedule(m, cand, list, cfg).endMin;
+      if(e<bestEnd){bestEnd=e; bi=i;}
     }
     skipped.push(list[order[bi]-1]);
     order.splice(bi,1);
-    order = twoOpt(m, order);
+    order = twoOpt(m, order, cfg.roundTrip);
   }
-  return {stops:[], endMin:cfg.startMin, skipped:skipped};
+  return {stops:[], returnTravel:null, endMin:cfg.startMin, skipped:skipped};
 }
 
 /* ---------- メイン計算 ---------- */
@@ -490,7 +504,8 @@ function renderResult(){
   const nOut = plan.stops.length - nIn;
   let html = `回れるのは <b>${plan.stops.length}件</b>(室内 ${nIn}件・外観 ${nOut}件)`;
   if(plan.stops.length){
-    html += ` / 終了予定 <b>${minToHm(plan.endMin)}</b> `;
+    const endLabel = plan.returnTravel!=null ? '出発地に帰着' : '終了予定';
+    html += ` / ${endLabel} <b>${minToHm(plan.endMin)}</b> `;
     html += plan.endMin<=cfg.endLimit ? `<span class="badge-ok">✓ ${minToHm(cfg.endLimit)}までに終わります</span>` : '';
   }
   if(approx) html += `<div class="hint" style="color:var(--warn);">⚠ ルート計算サーバーに繋がらなかったため、移動時間は直線距離からの概算です。</div>`;
@@ -515,6 +530,18 @@ function renderResult(){
     tb.appendChild(tr2);
     prevPt = s.row;
   });
+  if(plan.returnTravel!=null && plan.stops.length){
+    const trR = document.createElement('tr'); trR.className='travelrow';
+    trR.innerHTML = `<td colspan="4">🚗 帰り 約${Math.round(plan.returnTravel)}分 <a class="gmaplink" href="${gmapLink(prevPt,start)}" target="_blank">→ この区間をナビで開く</a></td>`;
+    tb.appendChild(trR);
+    const trG = document.createElement('tr');
+    trG.innerHTML =
+      `<td style="width:34px;"><span class="num" style="background:var(--orange);">着</span></td>`+
+      `<td><b>出発地に戻る</b></td>`+
+      `<td style="white-space:nowrap;">${minToHm(plan.endMin)} 着</td>`+
+      `<td></td>`;
+    tb.appendChild(trG);
+  }
 
   // 入りきらない・見つからない物件
   let sk = '';
@@ -549,6 +576,7 @@ function drawMap(){
     L.marker([s.row.lat,s.row.lon], {icon:L.divIcon({className:'', html:'<div class="numicon">'+(i+1)+'</div>', iconSize:[28,28], iconAnchor:[14,14]})})
       .addTo(mapLayer).bindPopup((s.row.name||s.row.addr)+'<br>'+minToHm(s.arrive)+'着');
   });
+  if(plan.returnTravel!=null && pts.length>1) pts.push([start.lat,start.lon]);
   if(pts.length>1) L.polyline(pts, {color:'#1a73e8', weight:3, dashArray:'6 8'}).addTo(mapLayer);
   map.fitBounds(pts, {padding:[36,36]});
 }
@@ -558,11 +586,13 @@ function openGmapAll(){
   if(!lastResult || !lastResult.plan.stops.length) return;
   const {start, plan} = lastResult;
   const stops = plan.stops;
+  const round = plan.returnTravel!=null;
   const last = stops[stops.length-1].row;
   let url = 'https://www.google.com/maps/dir/?api=1&travelmode=driving' +
     '&origin=' + start.lat + ',' + start.lon +
-    '&destination=' + last.lat + ',' + last.lon;
-  const way = stops.slice(0,-1).map(s=>s.row.lat+','+s.row.lon).join('|');
+    '&destination=' + (round ? start.lat+','+start.lon : last.lat+','+last.lon);
+  const wayStops = round ? stops : stops.slice(0,-1);
+  const way = wayStops.map(s=>s.row.lat+','+s.row.lon).join('|');
   if(way) url += '&waypoints=' + encodeURIComponent(way);
   if(stops.length > 10) alert('件数が多いため、Googleマップでは途中までしか表示されないことがあります。その場合は表の「この区間をナビで開く」を1区間ずつ使ってください。');
   window.open(url, '_blank');
@@ -574,11 +604,109 @@ function copySchedule(){
   plan.stops.forEach((s,i)=>{
     txt += `${i+1}. ${minToHm(s.arrive)}着 ${s.row.name||s.row.addr}(${s.row.type==='in'?'室内':'外観'})\n`;
   });
-  txt += `終了予定 ${minToHm(plan.endMin)}\n`;
+  txt += plan.returnTravel!=null ? `出発地に帰着 ${minToHm(plan.endMin)}\n` : `終了予定 ${minToHm(plan.endMin)}\n`;
   if(plan.skipped.length) txt += '\n▼時間内に入らない物件\n' + plan.skipped.map(r=>'・'+(r.name||r.addr)).join('\n') + '\n';
   navigator.clipboard.writeText(txt).then(
     ()=>alert('コピーしました!LINEなどに貼り付けできます。'),
     ()=>alert('コピーできませんでした。'));
+}
+
+/* ---------- PDF・写真からの読み込み ---------- */
+function loadScript(src){
+  return new Promise((res,rej)=>{
+    const s=document.createElement('script'); s.src=src;
+    s.onload=res; s.onerror=()=>rej(new Error('部品のダウンロードに失敗しました。ネット接続を確認してください。'));
+    document.head.appendChild(s);
+  });
+}
+let pdfjsReady=null, tessReady=null, tessWorker=null;
+function ensurePdfjs(){
+  if(!pdfjsReady){
+    pdfjsReady = loadScript('https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js').then(()=>{
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    });
+  }
+  return pdfjsReady;
+}
+function ensureTess(){
+  if(!tessReady) tessReady = loadScript('https://unpkg.com/tesseract.js@5.1.1/dist/tesseract.min.js');
+  return tessReady;
+}
+async function getTessWorker(){
+  if(!tessWorker){
+    await ensureTess();
+    setStatus('文字認識の部品を準備しています…(1回目は数分かかることがあります)');
+    tessWorker = await Tesseract.createWorker('jpn', 1, {
+      logger: m=>{ if(m.status==='recognizing text') setStatus('文字を認識しています… '+Math.round(m.progress*100)+'%'); }
+    });
+  }
+  return tessWorker;
+}
+async function ocrImage(imgLike, label){
+  const worker = await getTessWorker();
+  setStatus((label||'写真')+' の文字を認識しています…');
+  const {data} = await worker.recognize(imgLike);
+  return data.text||'';
+}
+// 日本語OCRにありがちな「文字の間の余計なスペース」を除去
+function cleanOcrText(t){
+  return t
+    .replace(/([一-龯々ぁ-んァ-ヶー])[ \t]+(?=[一-龯々ぁ-んァ-ヶー])/g,'$1')
+    .replace(/([0-9０-９])[ \t]+(?=[-−0-9０-９])/g,'$1')
+    .replace(/([-−])[ \t]+(?=[0-9０-９])/g,'$1');
+}
+function appendImported(text, srcName){
+  text = cleanOcrText(text).split(/\r?\n/).map(l=>l.trim()).filter(l=>l).join('\n');
+  if(!text){ setStatus(srcName+'から文字を読み取れませんでした。', true); return; }
+  const ta = $('#inputText');
+  ta.value = (ta.value.trim()? ta.value.trim()+'\n' : '') + text;
+  saveState();
+  parseInput(true);
+  if(rows.length) setStatus(srcName+'から読み込みました。ステップ2の一覧で住所が正しいか確認してください。');
+}
+async function importPdf(file){
+  try{
+    setStatus('PDFを読み込んでいます…');
+    await ensurePdfjs();
+    const data = new Uint8Array(await file.arrayBuffer());
+    const pdf = await pdfjsLib.getDocument({data:data}).promise;
+    let text='';
+    for(let p=1;p<=pdf.numPages;p++){
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      const lines = {};
+      tc.items.forEach(it=>{
+        const y = Math.round(it.transform[5]/4)*4;
+        (lines[y]=lines[y]||[]).push(it);
+      });
+      Object.keys(lines).map(Number).sort((a,b)=>b-a).forEach(y=>{
+        text += lines[y].sort((a,b)=>a.transform[4]-b.transform[4]).map(i=>i.str).join('') + '\n';
+      });
+    }
+    if(text.replace(/\s/g,'').length < 20){
+      // 文字が埋め込まれていない(スキャン・写真の)PDF → 画像にして文字認識
+      setStatus('文字なしPDFのようです。画像として文字認識します…');
+      text='';
+      const maxP = Math.min(pdf.numPages, 5);
+      for(let p=1;p<=maxP;p++){
+        const page = await pdf.getPage(p);
+        const vp = page.getViewport({scale:2});
+        const c = document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+        await page.render({canvasContext:c.getContext('2d'), viewport:vp}).promise;
+        text += await ocrImage(c, 'PDF '+p+'/'+maxP+'ページ') + '\n';
+      }
+    }
+    appendImported(text, 'PDF');
+  }catch(e){ setStatus('PDFの読み込みに失敗しました:'+e.message, true); }
+}
+async function importImages(files){
+  try{
+    let text='';
+    for(let i=0;i<files.length;i++){
+      text += await ocrImage(files[i], '写真 '+(i+1)+'/'+files.length) + '\n';
+    }
+    appendImported(text, '写真');
+  }catch(e){ setStatus('写真の文字認識に失敗しました:'+e.message, true); }
 }
 
 /* ---------- 現在地 ---------- */
@@ -608,7 +736,11 @@ $('#calcBtn').addEventListener('click', calc);
 $('#geoBtn').addEventListener('click', useGeo);
 $('#gmapAllBtn').addEventListener('click', openGmapAll);
 $('#copyBtn').addEventListener('click', copySchedule);
-['startTime','endTime','durOut','durIn','margin','parkMin','startAddr'].forEach(id=>{
+$('#pdfBtn').addEventListener('click', ()=>$('#pdfFile').click());
+$('#imgBtn').addEventListener('click', ()=>$('#imgFile').click());
+$('#pdfFile').addEventListener('change', e=>{ if(e.target.files[0]) importPdf(e.target.files[0]); e.target.value=''; });
+$('#imgFile').addEventListener('change', e=>{ if(e.target.files.length) importImages(Array.from(e.target.files)); e.target.value=''; });
+['startTime','endTime','durOut','durIn','margin','parkMin','startAddr','roundTrip'].forEach(id=>{
   document.getElementById(id).addEventListener('change', saveState);
 });
 $('#inputText').addEventListener('change', saveState);
