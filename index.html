@@ -150,6 +150,12 @@
       <label>駐車・準備 <input type="number" id="parkMin" value="5" min="0" max="60" style="width:60px;">分/件</label>
       <label style="font-weight:bold;"><input type="checkbox" id="roundTrip" checked> 最後に出発地へ戻る(往復)</label>
     </div>
+    <div style="margin-top:12px; border-top:1px dashed var(--line); padding-top:10px;">
+      <label style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">🤖 AI読み取りキー(無料・おすすめ)
+        <input type="password" id="aiKey" style="flex:1; min-width:220px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:16px; font-family:inherit;" placeholder="AIza… で始まるキーを貼り付け">
+      </label>
+      <div class="hint" style="margin-top:6px;">ここにキーを入れると、写真・PDFの読み取りが<b>AI(Google Gemini)</b>になり、どんなチラシでも住所を一発で抜き出せるようになります。キーは無料で作れます:<a href="https://aistudio.google.com/apikey" target="_blank" style="color:var(--main);">aistudio.google.com/apikey</a> を開いてGoogleアカウントでログイン→「APIキーを作成」→ コピーしてここに貼るだけ。キーはこの端末の中にだけ保存されます。※AI使用時は画像がGoogle(Gemini)に送信されます。空欄の場合は従来の文字認識で動きます。</div>
+    </div>
     <div class="hint" style="margin-top:8px;">※ 設定は自動で保存されるので、次回からは入力不要です。</div>
   </div>
 
@@ -194,6 +200,7 @@ function saveState(){
       durOut:$('#durOut').value, durIn:$('#durIn').value, margin:$('#margin').value, parkMin:$('#parkMin').value,
       roundTrip:$('#roundTrip').checked
     }));
+    localStorage.setItem('routekun_aikey', $('#aiKey').value||'');
   }catch(e){}
 }
 function loadState(){
@@ -207,6 +214,7 @@ function loadState(){
       $('#margin').value = cfg.margin!=null?cfg.margin:20; $('#parkMin').value = cfg.parkMin!=null?cfg.parkMin:5;
       $('#roundTrip').checked = cfg.roundTrip!==false;
     }
+    $('#aiKey').value = localStorage.getItem('routekun_aikey')||'';
     $('#inputText').value = localStorage.getItem('routekun_text')||'';
     const saved = JSON.parse(localStorage.getItem('routekun_rows')||'[]');
     saved.forEach(r=>rows.push({id:nextId++, name:r.name||'', addr:r.addr||'', type:r.type==='in'?'in':'out', lat:null, lon:null}));
@@ -964,12 +972,83 @@ function appendImported(text, srcName){
   saveState();
   parseInput(true);   // 件数や読み取れなかった行はparseInput側が表示する
 }
+/* --- AI読み取り(Google Gemini、キー設定時のみ) --- */
+function getAiKey(){ return ($('#aiKey').value||'').trim(); }
+async function fileToJpegPart(src){
+  let cv;
+  if(src && src.tagName === 'CANVAS'){ cv = src; }
+  else{
+    const img = await toDrawable(src);
+    cv = document.createElement('canvas');
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    cv.getContext('2d').drawImage(img, 0, 0);
+  }
+  if(Math.max(cv.width, cv.height) > 1600){
+    const s = 1600/Math.max(cv.width, cv.height);
+    const c2 = document.createElement('canvas');
+    c2.width = Math.round(cv.width*s); c2.height = Math.round(cv.height*s);
+    c2.getContext('2d').drawImage(cv, 0, 0, c2.width, c2.height);
+    cv = c2;
+  }
+  return {inline_data:{mime_type:'image/jpeg', data: cv.toDataURL('image/jpeg', 0.85).split(',')[1]}};
+}
+async function aiExtract(parts, hint){
+  const prompt = 'あなたは不動産撮影の助手です。渡された資料(チラシ・販売図面・物件リスト・LINEのやり取り)から、撮影に行く物件を抽出してください。\n' +
+    'ルール:\n' +
+    '- チラシ(販売図面)なら物件は1件。住所は「カーナビセット」「カーナビ入力」などカーナビ用の表記を最優先(地図の上か下にあることが多い)。\n' +
+    '- 「所在地」欄が「◯◯番33の一部」のような登記地番の場合、カーナビ用住所があればそちらを使う。無ければ地番でよい。\n' +
+    '- 不動産会社の住所(株式会社・TEL・〒・免許番号の近く)は物件ではないので絶対に使わない。\n' +
+    '- 物件リストやLINEのやり取りなら、載っている全物件を抽出する。\n' +
+    '- 「室内」「内観」「鍵」など室内撮影の指示があれば interior を true に。\n' +
+    '- 物件名・号棟・号室が分かれば name に入れる。不明なら空文字。\n' +
+    '- 住所は都道府県または市区町村から始まる形で書く。\n' +
+    'JSONだけで返答: {"items":[{"name":"...","address":"...","interior":false}]}' +
+    (hint ? '\n補足: ' + hint : '');
+  const body = {
+    contents: [{parts: [{text: prompt}].concat(parts)}],
+    generationConfig: {response_mime_type: 'application/json', temperature: 0}
+  };
+  const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(getAiKey()), {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if(res.status===400 || res.status===401 || res.status===403) throw new Error('AIキーが正しくないようです。設定の「AI読み取りキー」を確認してください。');
+  if(res.status===429) throw new Error('AIの無料枠の上限に一時的に達しました。1分ほど待ってからもう一度お試しください。');
+  if(!res.ok) throw new Error('AI読み取りの通信に失敗しました(エラー' + res.status + ')');
+  const js = await res.json();
+  const txt = (js.candidates && js.candidates[0] && js.candidates[0].content && js.candidates[0].content.parts)
+    ? js.candidates[0].content.parts.map(p=>p.text||'').join('') : '';
+  let out;
+  try{ out = JSON.parse(txt); }catch(e){ throw new Error('AIの返答を解釈できませんでした'); }
+  return (out.items||[]).filter(it=>it && it.address);
+}
+function aiItemsToText(items){
+  return items.map(it=> ((it.address||'') + ' ' + (it.name||'')).trim() + ' ' + (it.interior ? '室内あり' : '外観のみ')).join('\n');
+}
+
 async function importPdf(file){
   try{
     setStatus('PDFを読み込んでいます…');
     await ensurePdfjs();
     const data = new Uint8Array(await file.arrayBuffer());
     const pdf = await pdfjsLib.getDocument({data:data}).promise;
+    if(getAiKey()){
+      // AI読み取り: ページを画像にしてまとめてAIに渡す
+      const maxP = Math.min(pdf.numPages, 4);
+      const parts = [];
+      for(let p=1;p<=maxP;p++){
+        setStatus(`AI読み取りの準備中… (${p}/${maxP}ページ)`);
+        const page = await pdf.getPage(p);
+        const vp = page.getViewport({scale:2});
+        const c = document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+        await page.render({canvasContext:c.getContext('2d'), viewport:vp}).promise;
+        parts.push(await fileToJpegPart(c));
+      }
+      setStatus('AIがPDFを読み取っています…');
+      const items = await aiExtract(parts, 'これは1つのPDF資料の複数ページです。同じ物件が繰り返し載っている場合は1件にまとめてください。ファイル名: ' + file.name);
+      if(items.length) appendImported(aiItemsToText(items), 'PDF(AI)');
+      else setStatus('AIがPDFから物件を見つけられませんでした。', true);
+      return;
+    }
     let text='';
     for(let p=1;p<=pdf.numPages;p++){
       const page = await pdf.getPage(p);
@@ -1001,11 +1080,22 @@ async function importPdf(file){
 }
 async function importImages(files){
   try{
+    if(getAiKey()){
+      // AI読み取り: 1枚ずつAIに見せる
+      for(let i=0;i<files.length;i++){
+        setStatus(`AIが写真 ${i+1}/${files.length} を読み取っています…`);
+        const part = await fileToJpegPart(files[i]);
+        const items = await aiExtract([part], 'ファイル名: ' + files[i].name);
+        if(items.length) appendImported(aiItemsToText(items), '写真(AI)');
+        else setStatus(`写真 ${i+1}/${files.length}: AIが物件を見つけられませんでした。`, true);
+      }
+      return;
+    }
     for(let i=0;i<files.length;i++){
       const t = await ocrWithRetry(files[i], '写真 '+(i+1)+'/'+files.length);
       finishImport(t, '写真', files[i].name);   // 1枚ずつ判定(チラシ写真とリスト写真が混ざってもOK)
     }
-  }catch(e){ setStatus('写真の文字認識に失敗しました:'+e.message, true); }
+  }catch(e){ setStatus('写真の読み取りに失敗しました:'+e.message, true); }
 }
 
 /* ---------- 現在地 ---------- */
@@ -1053,7 +1143,7 @@ function resetAll(){
 $('#clearBtn').addEventListener('click', resetAll);
 $('#resetBtn').addEventListener('click', resetAll);
 $('#imgFile').addEventListener('change', e=>{ if(e.target.files.length) importImages(Array.from(e.target.files)); e.target.value=''; });
-['startTime','endTime','durOut','durIn','margin','parkMin','startAddr','roundTrip'].forEach(id=>{
+['startTime','endTime','durOut','durIn','margin','parkMin','startAddr','roundTrip','aiKey'].forEach(id=>{
   document.getElementById(id).addEventListener('change', saveState);
 });
 $('#inputText').addEventListener('change', saveState);
