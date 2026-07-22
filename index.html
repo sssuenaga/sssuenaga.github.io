@@ -234,16 +234,19 @@ function stripLead(line){
   return line.replace(/^(?:[①-⑳㉑-㉟]|\(?\d{1,3}[\.\)、．]|\d{1,2}\s+|\d{1,2}(?=[一-龯ぁ-んァ-ヶ])|[・･\-*＊■□●○◎▼▶>≫【】\[\]()「」『』\s]+)+/,'').trim();
 }
 function extractAddress(line){
-  line = line.replace(LABEL_RE,'');
-  let m = line.match(new RegExp(PREF + ACHR + '{3,50}'));
-  if(!m) m = line.match(new RegExp('[一-龯]{1,6}[市区郡]' + ACHR + '{2,50}'));
-  if(!m) m = line.match(new RegExp('[一-龯]{2,8}[町村]' + ACHR + '{2,50}'));
+  // 「住所:」などのラベルを外して探す(位置は元の行に合わせて補正)
+  const lm = line.match(LABEL_RE);
+  const off = lm ? lm[0].length : 0;
+  const body = line.slice(off);
+  let m = body.match(new RegExp(PREF + ACHR + '{3,50}'));
+  if(!m) m = body.match(new RegExp('[一-龯]{1,6}[市区郡]' + ACHR + '{2,50}'));
+  if(!m) m = body.match(new RegExp('[一-龯]{2,8}[町村]' + ACHR + '{2,50}'));
   if(!m) return null;
   let addr = m[0];
   // 番地(2丁目8番1号 / 2-8-1 など)の後ろに建物名がくっついていたら切り離す
   const cut = addr.match(/^(.*?\d+(?:(?:丁目|番地|番|号|-)\d+)*(?:丁目|番地|番|号)?)/);
   if(cut && /\d/.test(cut[1])) addr = cut[1];
-  return {addr:addr, index:m.index};
+  return {addr:addr, index: off + m.index};
 }
 function looksLikeName(s){
   return !!s && s.length>=2 && s.length<=30 && !GREET_RE.test(s) && !/^\d+$/.test(s);
