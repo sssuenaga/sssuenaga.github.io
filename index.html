@@ -370,6 +370,23 @@ async function geocode(addr){
   try{ localStorage.setItem('routekun_geocache', JSON.stringify(geoCache)); }catch(e){}
   return out;
 }
+async function geocodeSmart(addr){
+  // そのままで見つからない場合、号室や末尾の番地を少しずつ削って再挑戦(読み間違い・表記ゆれ対策)
+  const variants = [addr];
+  const noRoom = addr.replace(/\d+号室?.*$/,'').replace(/[-]$/,'').trim();
+  if(noRoom && noRoom !== addr && noRoom.length >= 5) variants.push(noRoom);
+  let base = variants[variants.length-1];
+  for(let k=0;k<2;k++){
+    const shorter = base.replace(/-\d+$/,'').replace(/(?:番地?|号)\d*$/,'').trim();
+    if(shorter !== base && shorter.length >= 5){ variants.push(shorter); base = shorter; }
+  }
+  for(const v of variants){
+    const g = await geocode(v);
+    if(g) return g;
+    await new Promise(r=>setTimeout(r,120));
+  }
+  return null;
+}
 
 /* ---------- 移動時間マトリクス(OSRM、失敗時は直線距離で概算) ---------- */
 function haversine(a,b){
@@ -572,7 +589,7 @@ async function calc(){
       if(list[i].lat!=null) continue;
       setStatus(`住所を調べています… (${i+1}/${list.length}) ${list[i].addr}`);
       let g = null;
-      try{ g = await geocode(list[i].addr); }catch(e){ setStatus('住所検索サーバーに繋がりません。ネット接続を確認してください。', true); btn.disabled=false; return; }
+      try{ g = await geocodeSmart(list[i].addr); }catch(e){ setStatus('住所検索サーバーに繋がりません。ネット接続を確認してください。', true); btn.disabled=false; return; }
       if(g){ list[i].lat=g.lat; list[i].lon=g.lon; }
       else failed.push(list[i]);
       await new Promise(r=>setTimeout(r,150));
@@ -763,11 +780,12 @@ async function getTessWorker(){
     tessWorker = await Tesseract.createWorker('jpn', 1, {
       logger: m=>{ if(m.status==='recognizing text') setStatus('文字を認識しています… '+Math.round(m.progress*100)+'%'); }
     });
+    await tessWorker.setParameters({preserve_interword_spaces:'1'});
   }
   return tessWorker;
 }
 async function prepForOcr(imgLike){
-  // 文字認識しやすいように、小さめの画像は拡大しておく(canvasはPDF由来なのでそのまま)
+  // 文字認識しやすいように、拡大+白黒化+コントラスト強調(canvasはPDF由来なのでそのまま)
   if(imgLike && imgLike.tagName === 'CANVAS') return imgLike;
   const img = await new Promise((res,rej)=>{
     const im = new Image();
@@ -775,13 +793,24 @@ async function prepForOcr(imgLike){
     im.onerror = ()=>rej(new Error('画像を開けませんでした(対応していない形式の可能性があります)'));
     im.src = URL.createObjectURL(imgLike);
   });
-  const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
-  const scale = maxDim < 1500 ? Math.min(3, 1500/maxDim) : 1;
-  if(scale <= 1) return img;
+  const scale = Math.min(3, Math.max(1, 1800/img.naturalWidth));
   const c = document.createElement('canvas');
   c.width = Math.round(img.naturalWidth*scale);
   c.height = Math.round(img.naturalHeight*scale);
-  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(img, 0, 0, c.width, c.height);
+  if(c.width*c.height <= 12000000){
+    // 白黒化+コントラスト(LINEの吹き出しなど色付き背景の文字を読みやすく)
+    const d = g.getImageData(0, 0, c.width, c.height);
+    const p = d.data;
+    for(let i=0;i<p.length;i+=4){
+      let v = 0.299*p[i] + 0.587*p[i+1] + 0.114*p[i+2];
+      v = (v-128)*1.35 + 128;
+      p[i] = p[i+1] = p[i+2] = v<0?0:(v>255?255:v);
+    }
+    g.putImageData(d, 0, 0);
+  }
   return c;
 }
 async function ocrImage(imgLike, label){
@@ -797,7 +826,9 @@ function cleanOcrText(t){
     .replace(/([一-龯々ぁ-んァ-ヶー])[ \t]+(?=[一-龯々ぁ-んァ-ヶー])/g,'$1')
     .replace(/([一-龯々ぁ-んァ-ヶー])[ \t]+(?=[0-9０-９])/g,'$1')
     .replace(/([0-9０-９])[ \t]+(?=[-−0-9０-９])/g,'$1')
-    .replace(/([-−])[ \t]+(?=[0-9０-９])/g,'$1');
+    .replace(/([-−])[ \t]+(?=[0-9０-９])/g,'$1')
+    .replace(/(\d)\s*[一ー―~〜]\s*(?=\d)/g,'$1-')   // 数字にはさまれた「一」「ー」はハイフンの読み間違い
+    .replace(/(\d)\s*[oOＯｏ]\s*(?=\d|$)/gm,'$10'); // 数字の並びの中のオーは0の読み間違い
 }
 function appendImported(text, srcName){
   text = cleanOcrText(text).split(/\r?\n/).map(l=>l.trim()).filter(l=>l).join('\n');
